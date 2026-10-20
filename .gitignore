@@ -2,3 +2,4 @@ build/
 *.o
 nero
 lexer_test
+parser_test
