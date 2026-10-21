@@ -1,3 +1,4 @@
+#include "codegen.hpp"
 #include "parser.hpp"
 #include <fstream>
 #include <iomanip>
@@ -5,13 +6,16 @@
 #include <sstream>
 
 int main(int argc, char** argv) {
-    std::string mode = argc >= 2 ? argv[1] : "";
-    if (argc != 3 || (mode != "--tokens" && mode != "--ast")) {
-        std::cerr << "usage: nero --tokens|--ast <file.nero>\n";
+    std::string mode;
+    const char* path = nullptr;
+    if (argc == 2) { mode = "run"; path = argv[1]; }
+    else if (argc == 3) { mode = argv[1]; path = argv[2]; }
+    if (!path || (mode != "run" && mode != "--tokens" && mode != "--ast" && mode != "--bin")) {
+        std::cerr << "usage: nero [--tokens|--ast|--bin] <file.nero>\n";
         return 1;
     }
-    std::ifstream f(argv[2]);
-    if (!f) { std::cerr << "cannot open " << argv[2] << "\n"; return 1; }
+    std::ifstream f(path);
+    if (!f) { std::cerr << "cannot open " << path << "\n"; return 1; }
     std::stringstream ss;
     ss << f.rdbuf();
     try {
@@ -26,10 +30,25 @@ int main(int argc, char** argv) {
                 }
                 std::cout << "\n";
             }
-        } else {
-            Program prog = Parser(std::move(tokens)).parse_program();
-            std::cout << dump_program(prog);
+            return 0;
         }
+
+        Program prog = Parser(std::move(tokens)).parse_program();
+        if (mode == "--ast") {
+            std::cout << dump_program(prog);
+            return 0;
+        }
+
+        Grimoire g;
+        NeroFn fn = CodeGen(g).compile(prog);
+        if (mode == "--bin") {
+            std::ofstream("out.bin", std::ios::binary)
+                .write(reinterpret_cast<const char*>(g.bytes().data()), g.bytes().size());
+            std::cerr << "wrote " << g.bytes().size() << " bytes to out.bin\n";
+            return 0;
+        }
+        fn();
+        std::fflush(stdout);
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;

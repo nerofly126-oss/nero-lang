@@ -3,3 +3,5 @@ build/
 nero
 lexer_test
 parser_test
+out.bin
+codegen_test
