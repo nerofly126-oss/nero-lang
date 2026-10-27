@@ -6,10 +6,10 @@
 #include <vector>
 
 enum class Tok {
-    Number, Ident,
-    Let, While, If, Else, Print,
+    Number, String, Ident,
+    Let, While, If, Else, Print, Fn, Return,
     Plus, Minus, Star, Slash, Percent,
-    LParen, RParen, LBrace, RBrace,
+    LParen, RParen, LBrace, RBrace, Comma, Colon, Arrow,
     Assign, Eq, Ne, Lt, Le, Gt, Ge,
     Newline, End
 };
@@ -17,12 +17,15 @@ enum class Tok {
 inline const char* tok_name(Tok t) {
     switch (t) {
         case Tok::Number:  return "Number";
+        case Tok::String:  return "String";
         case Tok::Ident:   return "Ident";
         case Tok::Let:     return "Let";
         case Tok::While:   return "While";
         case Tok::If:      return "If";
         case Tok::Else:    return "Else";
         case Tok::Print:   return "Print";
+        case Tok::Fn:      return "Fn";
+        case Tok::Return:  return "Return";
         case Tok::Plus:    return "Plus";
         case Tok::Minus:   return "Minus";
         case Tok::Star:    return "Star";
@@ -32,6 +35,9 @@ inline const char* tok_name(Tok t) {
         case Tok::RParen:  return "RParen";
         case Tok::LBrace:  return "LBrace";
         case Tok::RBrace:  return "RBrace";
+        case Tok::Comma:   return "Comma";
+        case Tok::Colon:   return "Colon";
+        case Tok::Arrow:   return "Arrow";
         case Tok::Assign:  return "Assign";
         case Tok::Eq:      return "Eq";
         case Tok::Ne:      return "Ne";
@@ -47,7 +53,7 @@ inline const char* tok_name(Tok t) {
 
 struct Token {
     Tok kind;
-    std::string text;
+    std::string text;   // for String tokens this is the decoded content, escapes already resolved
     int64_t value = 0;
     int line = 0, col = 0;
 };
@@ -74,6 +80,11 @@ public:
                 continue;
             }
 
+            if (c == '"') {
+                out.push_back({Tok::String, read_string(l, cl), 0, l, cl});
+                continue;
+            }
+
             if (is_digit(c)) {
                 size_t start = pos_;
                 int64_t v = 0;
@@ -92,6 +103,7 @@ public:
                 static const std::unordered_map<std::string, Tok> keywords = {
                     {"let", Tok::Let}, {"while", Tok::While}, {"if", Tok::If},
                     {"else", Tok::Else}, {"print", Tok::Print},
+                    {"fn", Tok::Fn}, {"return", Tok::Return},
                 };
                 size_t start = pos_;
                 while (pos_ < src_.size() && (is_alpha(src_[pos_]) || is_digit(src_[pos_]))) advance();
@@ -105,7 +117,10 @@ public:
             std::string text(1, c);
             switch (c) {
                 case '+': kind = Tok::Plus; break;
-                case '-': kind = Tok::Minus; break;
+                case '-':
+                    if (peek(1) == '>') { kind = Tok::Arrow; text = "->"; }
+                    else kind = Tok::Minus;
+                    break;
                 case '*': kind = Tok::Star; break;
                 case '/': kind = Tok::Slash; break;
                 case '%': kind = Tok::Percent; break;
@@ -113,6 +128,8 @@ public:
                 case ')': kind = Tok::RParen; break;
                 case '{': kind = Tok::LBrace; break;
                 case '}': kind = Tok::RBrace; break;
+                case ',': kind = Tok::Comma; break;
+                case ':': kind = Tok::Colon; break;
                 case '=':
                     if (peek(1) == '=') { kind = Tok::Eq; text = "=="; }
                     else kind = Tok::Assign;
@@ -155,6 +172,34 @@ private:
         if (src_[pos_] == '\n') { line_++; col_ = 1; }
         else col_++;
         pos_++;
+    }
+
+    // reads a string literal starting at the opening quote, resolving \n \t \" and \\ escapes
+    std::string read_string(int l, int cl) {
+        advance();  // opening quote
+        std::string s;
+        while (true) {
+            if (pos_ >= src_.size() || src_[pos_] == '\n') fail(l, cl, "unterminated string");
+            char d = src_[pos_];
+            if (d == '"') { advance(); break; }
+            if (d == '\\') {
+                advance();
+                if (pos_ >= src_.size() || src_[pos_] == '\n') fail(l, cl, "unterminated string");
+                char e = src_[pos_];
+                switch (e) {
+                    case 'n':  s += '\n'; break;
+                    case 't':  s += '\t'; break;
+                    case '"':  s += '"'; break;
+                    case '\\': s += '\\'; break;
+                    default:   fail(line_, col_, std::string("unknown escape '\\") + e + "'");
+                }
+                advance();
+            } else {
+                s += d;
+                advance();
+            }
+        }
+        return s;
     }
 
     [[noreturn]] static void fail(int line, int col, const std::string& msg) {

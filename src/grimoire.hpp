@@ -45,6 +45,8 @@ public:
     void push(Reg r) { if (r >= 8) byte(0x41); byte(0x50 | (r & 7)); }
     void pop(Reg r)  { if (r >= 8) byte(0x41); byte(0x58 | (r & 7)); }
     void call(Reg r) { if (r >= 8) byte(0x41); byte(0xFF); byte(0xC0 | (2 << 3) | (r & 7)); }
+void call(Label& l) { byte(0xE8); rel32(l); }
+void lea(Reg dst, Label& l) { rex_w(dst, 0); byte(0x8D); byte(0x05 | ((dst & 7) << 3)); rel32(l); }
     void ret() { byte(0xC3); }
 
     // control flow

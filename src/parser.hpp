@@ -2,10 +2,13 @@
 #include "ast.hpp"
 
 // Grammar
-//   program   := { stmt end } End
+//   program   := { (func | stmt) end } End
+//   func      := "fn" IDENT "(" [ IDENT { "," IDENT } ] ")" block      (top level only)
 //   stmt      := "let" IDENT "=" expr
 //              | IDENT "=" expr
+//              | IDENT "(" ... ")"                  (a call used as a statement)
 //              | "print" expr
+//              | "return" [ expr ]
 //              | "while" expr block
 //              | "if" expr block [ "else" ( if-stmt | block ) ]
 //   block     := "{" { stmt end } "}"
@@ -14,7 +17,7 @@
 //   additive  := term { ("+" | "-") term }
 //   term      := unary { ("*" | "/" | "%") unary }
 //   unary     := "-" unary | primary
-//   primary   := NUMBER | IDENT | "(" expr ")"
+//   primary   := NUMBER | IDENT | IDENT "(" [ expr { "," expr } ] ")" | "(" expr ")"
 class Parser {
 public:
     explicit Parser(std::vector<Token> toks) : toks_(std::move(toks)) {}
@@ -23,7 +26,8 @@ public:
         Program prog;
         skip_newlines();
         while (!at(Tok::End)) {
-            prog.stmts.push_back(parse_stmt());
+            if (at(Tok::Fn)) prog.funcs.push_back(parse_func());
+            else prog.stmts.push_back(parse_stmt());
             end_of_stmt();
         }
         return prog;
@@ -34,6 +38,7 @@ private:
     size_t pos_ = 0;
 
     const Token& cur() const { return toks_[pos_]; }
+    const Token& peek_tok() const { return toks_[pos_ + 1 < toks_.size() ? pos_ + 1 : pos_]; }
     bool at(Tok k) const { return cur().kind == k; }
     void next() { if (pos_ + 1 < toks_.size()) pos_++; }
     void skip_newlines() { while (at(Tok::Newline)) next(); }
@@ -62,6 +67,36 @@ private:
         fail(cur(), "expected end of line, got " + describe(cur()));
     }
 
+    Type parse_type() {
+        const Token& t = cur();
+        if (t.kind == Tok::Ident && t.text == "int") { next(); return Type::Int; }
+        if (t.kind == Tok::Ident && t.text == "str") { next(); return Type::Str; }
+        fail(t, "expected a type ('int' or 'str'), got " + describe(t));
+    }
+
+    Func parse_func() {
+        Func f;
+        f.line = cur().line;
+        f.col = cur().col;
+        next();  // 'fn'
+        f.name = expect(Tok::Ident, "a function name after 'fn'").text;
+        expect(Tok::LParen, "'(' after the function name");
+        if (!at(Tok::RParen)) {
+            while (true) {
+                f.params.push_back(expect(Tok::Ident, "a parameter name").text);
+                Type t = Type::Int;  // parameters are int unless annotated
+                if (at(Tok::Colon)) { next(); t = parse_type(); }
+                f.param_types.push_back(t);
+                if (at(Tok::Comma)) next();
+                else break;
+            }
+        }
+        expect(Tok::RParen, "')' after the parameters");
+        if (at(Tok::Arrow)) { next(); f.ret = parse_type(); }
+        f.body = parse_block();
+        return f;
+    }
+
     StmtPtr parse_stmt() {
         const Token& t = cur();
         auto s = std::make_unique<Stmt>();
@@ -76,16 +111,26 @@ private:
                 s->expr = parse_expr();
                 break;
             case Tok::Ident:
-                s->kind = Stmt::Assign;
-                s->name = t.text;
-                next();
-                expect(Tok::Assign, "'=' after the variable name");
-                s->expr = parse_expr();
+                if (peek_tok().kind == Tok::LParen) {
+                    s->kind = Stmt::ExprStmt;
+                    s->expr = parse_expr();
+                } else {
+                    s->kind = Stmt::Assign;
+                    s->name = t.text;
+                    next();
+                    expect(Tok::Assign, "'=' after the variable name");
+                    s->expr = parse_expr();
+                }
                 break;
             case Tok::Print:
                 next();
                 s->kind = Stmt::Print;
                 s->expr = parse_expr();
+                break;
+            case Tok::Return:
+                next();
+                s->kind = Stmt::Return;
+                if (!at(Tok::Newline) && !at(Tok::RBrace) && !at(Tok::End)) s->expr = parse_expr();
                 break;
             case Tok::While:
                 next();
@@ -95,6 +140,8 @@ private:
                 break;
             case Tok::If:
                 return parse_if();
+            case Tok::Fn:
+                fail(t, "functions can only be declared at the top level");
             default:
                 fail(t, "unexpected " + describe(t) + " at the start of a statement");
         }
@@ -203,10 +250,29 @@ private:
             e->value = t.value;
             return e;
         }
+        if (t.kind == Tok::String) {
+            next();
+            e->kind = Expr::Str;
+            e->name = t.text;
+            return e;
+        }
         if (t.kind == Tok::Ident) {
             next();
-            e->kind = Expr::Var;
             e->name = t.text;
+            if (at(Tok::LParen)) {
+                next();
+                e->kind = Expr::Call;
+                if (!at(Tok::RParen)) {
+                    while (true) {
+                        e->args.push_back(parse_expr());
+                        if (at(Tok::Comma)) next();
+                        else break;
+                    }
+                }
+                expect(Tok::RParen, "')' after the arguments");
+            } else {
+                e->kind = Expr::Var;
+            }
             return e;
         }
         if (t.kind == Tok::LParen) {

@@ -1,0 +1,29 @@
+# text: literals, concatenation, comparison, len() and str()
+fn greet(name: str) -> str {
+    return "Hello, " + name + "!"
+}
+
+fn repeat(s: str, n: int) -> str {
+    let out = ""
+    let i = 0
+    while i < n {
+        out = out + s
+        i = i + 1
+    }
+    return out
+}
+
+print "n+ can print text now"
+print greet("Nero")
+print repeat("ab", 3)
+print "len of hello is " + str(len("hello"))
+print "2 + 3 = " + str(2 + 3)
+
+let name = "nero"
+if name == "nero" {
+    print "that is the creator"
+} else {
+    print "who is that"
+}
+
+print "tabs\tand \"quotes\" work"

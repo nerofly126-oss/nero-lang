@@ -1,0 +1,33 @@
+# functions, recursion, and calls buried inside expressions
+fn square(x) {
+    return x * x
+}
+
+fn fact(n) {
+    if n <= 1 {
+        return 1
+    }
+    return n * fact(n - 1)
+}
+
+# prints from inside a function, called from the middle of an expression
+fn shout(x) {
+    print x
+    return x
+}
+
+fn is_even(n) {
+    if n == 0 { return 1 }
+    return is_odd(n - 1)
+}
+
+fn is_odd(n) {
+    if n == 0 { return 0 }
+    return is_even(n - 1)
+}
+
+print square(12)
+print fact(10)
+print 1 + shout(5) * 2
+print is_even(10)
+print is_odd(7)
