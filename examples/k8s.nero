@@ -1,0 +1,132 @@
+# run with: ./nero eval examples/k8s.nero --yaml
+# straight into a cluster: ./nero eval examples/k8s.nero --yaml | kubectl apply --dry-run=client -f -
+
+type ObjectMeta {
+    name: str
+    labels: record = {}
+}
+
+type TemplateMeta {
+    labels: record = {}
+}
+
+type ContainerPort {
+    containerPort: int
+}
+
+type EnvVar {
+    name: str
+    value: str
+}
+
+type ResourceList {
+    cpu: str
+    memory: str
+}
+
+type Resources {
+    requests: ResourceList
+    limits: ResourceList
+}
+
+type Container {
+    name: str
+    image: str
+    ports: [ContainerPort]
+    env: [EnvVar] = []
+    resources: Resources
+}
+
+type PodSpec {
+    containers: [Container]
+}
+
+type PodTemplate {
+    metadata: TemplateMeta
+    spec: PodSpec
+}
+
+type LabelSelector {
+    matchLabels: record
+}
+
+type DeploymentSpec {
+    replicas: int
+    selector: LabelSelector
+    template: PodTemplate
+}
+
+type Deployment {
+    apiVersion: str = "apps/v1"
+    kind: str = "Deployment"
+    metadata: ObjectMeta
+    spec: DeploymentSpec
+}
+
+type ServicePort {
+    port: int
+    targetPort: int
+}
+
+type ServiceSpec {
+    selector: record
+    ports: [ServicePort]
+    type: str = "ClusterIP"
+}
+
+type Service {
+    apiVersion: str = "v1"
+    kind: str = "Service"
+    metadata: ObjectMeta
+    spec: ServiceSpec
+}
+
+fn labels(app: str, env: str) -> record {
+    return {app: app, env: env}
+}
+
+fn replicas_for(env: str) -> int {
+    return if env == "prod" { 5 } else if env == "staging" { 2 } else { 1 }
+}
+
+fn deployment(app: str, env: str, version: str, replicas: int) -> Deployment {
+    return Deployment {
+        metadata: ObjectMeta { name: "{app}-{env}", labels: labels(app, env) },
+        spec: DeploymentSpec {
+            replicas: replicas,
+            selector: LabelSelector { matchLabels: {app: app} },
+            template: PodTemplate {
+                metadata: TemplateMeta { labels: labels(app, env) },
+                spec: PodSpec {
+                    containers: [
+                        Container {
+                            name: app,
+                            image: "ghcr.io/nero/{app}:{version}",
+                            ports: [ContainerPort { containerPort: 8080 }],
+                            env: [EnvVar { name: "LOG_LEVEL", value: if env == "prod" { "info" } else { "debug" } }],
+                            resources: Resources {
+                                requests: ResourceList { cpu: "100m", memory: "128Mi" },
+                                limits: ResourceList { cpu: if env == "prod" { "1" } else { "500m" }, memory: "256Mi" },
+                            },
+                        },
+                    ],
+                },
+            },
+        },
+    }
+}
+
+fn service(app: str, env: str) -> Service {
+    return Service {
+        metadata: ObjectMeta { name: "{app}-{env}", labels: labels(app, env) },
+        spec: ServiceSpec {
+            selector: labels(app, env),
+            ports: [ServicePort { port: 80, targetPort: 8080 }],
+        },
+    }
+}
+
+for env in ["dev", "staging", "prod"] {
+    emit deployment("web", env, "1.4.2", replicas_for(env))
+    emit service("web", env)
+}

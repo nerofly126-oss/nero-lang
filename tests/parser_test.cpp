@@ -79,6 +79,32 @@ int main() {
     assert(throws("fn f() -> float { }"));
     assert(throws("print \"a\" \"b\""));
 
+    // step 1: booleans, lists, records, access, logic, emit
+    assert(ast("print true") == "print true\n");
+    assert(ast("print [1, 2 + 3]") == "print (list 1 (+ 2 3))\n");
+    assert(ast("print []") == "print (list)\n");
+    assert(ast("print {a: 1, \"b c\": 2}") == "print (record \"a\" 1 \"b c\" 2)\n");
+    assert(ast("print x.y.z") == "print (. (. x y) z)\n");
+    assert(ast("print xs[0][1]") == "print (index (index xs 0) 1)\n");
+    assert(ast("print f(1).a") == "print (. (call f 1) a)\n");
+    assert(ast("print -a.b") == "print (- (. a b))\n");
+    assert(ast("print not a and b or c") == "print (or (and (not a) b) c)\n");
+    assert(ast("print not a == b") == "print (not (== a b))\n");
+    assert(ast("emit {a: 1}") == "emit (record \"a\" 1)\n");
+    assert(ast("emit {\n  a: 1,\n  b: [\n    2,\n  ],\n}") == "emit (record \"a\" 1 \"b\" (list 2))\n");
+    assert(ast("fn f(a: bool, b: list) -> record { }") == "fn f(a: bool, b: list) -> record\n");
+    assert(ast("if x { emit 1 }") == "if x\n  emit 1\n");
+    assert(throws("emit"));
+    assert(throws("print {a 1}"));
+    assert(throws("print {a: 1 b: 2}"));
+    assert(throws("print {1: 2}"));
+    assert(throws("print {a: 1"));
+    assert(throws("print [1 2]"));
+    assert(throws("print [1"));
+    assert(throws("print x."));
+    assert(throws("print x[1"));
+    assert(throws("x.y = 1"));
+
     std::puts("all parser tests passed");
     return 0;
 }

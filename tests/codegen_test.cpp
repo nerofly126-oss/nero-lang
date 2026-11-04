@@ -175,6 +175,16 @@ int main() {
     assert(throws("fn str(x) { }"));
     assert(throws("fn f() -> str { return \"a\" }\nprint 1 + f()"));
 
+    // step 1: the compiled subset refuses the eval only syntax, with a clear error
+    assert(throws("print true"));
+    assert(throws("print [1, 2]"));
+    assert(throws("print {a: 1}"));
+    assert(throws("emit 1"));
+    assert(throws("print not 1"));
+    assert(throws("print 1 and 2"));
+    assert(throws("fn f(a: bool) { }"));
+    assert(throws("fn f() -> record { }"));
+
     std::puts("all codegen tests passed");
     return 0;
 }

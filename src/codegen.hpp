@@ -76,10 +76,14 @@ public:
     explicit CodeGen(Grimoire& g) : g_(g) {}
 
     NeroFn compile(const Program& prog) {
+        if (!prog.types.empty())
+            fail(prog.types[0].line, prog.types[0].col, "'type' only works in 'nero eval'");
         for (const Func& f : prog.funcs) {
-            if (find_builtin(f.name)) fail(f.line, f.col, "'" + f.name + "' is a builtin and cannot be redefined");
+            if (find_builtin(f.name) || f.name == "range") fail(f.line, f.col, "'" + f.name + "' is a builtin and cannot be redefined");
             if (funcs_.count(f.name)) fail(f.line, f.col, "function '" + f.name + "' is already defined");
             if (f.params.size() > 6) fail(f.line, f.col, "function '" + f.name + "' has too many parameters (max 6)");
+            for (const TypeRef& t : f.param_refs) need_basic(t, f.line, f.col);
+            need_basic(f.ret_ref, f.line, f.col);
             FuncInfo& fi = funcs_[f.name];
             fi.params = f.param_types;
             fi.ret = f.ret;
@@ -146,6 +150,11 @@ private:
 
     [[noreturn]] static void fail(int line, int col, const std::string& msg) {
         throw std::runtime_error(std::to_string(line) + ":" + std::to_string(col) + ": " + msg);
+    }
+
+    static void need_basic(const TypeRef& t, int line, int col) {
+        if (t.kind == Type::Bool || t.kind == Type::List || t.kind == Type::Record || t.kind == Type::Named)
+            fail(line, col, std::string("the type '") + typeref_str(t) + "' only works in 'nero eval'");
     }
 
     static int count_lets(const std::vector<StmtPtr>& stmts) {
@@ -272,6 +281,10 @@ private:
             case Stmt::ExprStmt:
                 gen_expr(*s.expr);
                 break;
+            case Stmt::Emit:
+                fail(s.line, s.col, "'emit' only works in 'nero eval'");
+            case Stmt::For:
+                fail(s.line, s.col, "'for' only works in 'nero eval'");
             case Stmt::Return: {
                 if (!in_func_) fail(s.line, s.col, "'return' outside a function");
                 if (s.expr) {
@@ -331,6 +344,7 @@ private:
                 return v.type;
             }
             case Expr::Unary:
+                if (e.op == Tok::Not) fail(e.line, e.col, "'not' only works in 'nero eval'");
                 need_int(*e.lhs, gen_expr(*e.lhs), "the operand of '-'");
                 g_.raw({0x48, 0xF7, 0xD8});        // neg rax
                 return Type::Int;
@@ -338,11 +352,25 @@ private:
                 return gen_binary(e);
             case Expr::Call:
                 return gen_call(e);
+            case Expr::Bool:
+            case Expr::List:
+            case Expr::Record:
+            case Expr::Field:
+            case Expr::Index:
+                fail(e.line, e.col, "booleans, lists and records only work in 'nero eval'");
+            case Expr::IfExpr:
+                fail(e.line, e.col, "'if' used as a value only works in 'nero eval'");
+            case Expr::Interp:
+                fail(e.line, e.col, "string interpolation only works in 'nero eval' (write \\{ for a literal brace)");
+            case Expr::Comp:
+                fail(e.line, e.col, "list comprehensions only work in 'nero eval'");
         }
         return Type::Int;
     }
 
     Type gen_binary(const Expr& e) {
+        if (e.op == Tok::And || e.op == Tok::Or)
+            fail(e.line, e.col, std::string("'") + op_str(e.op) + "' only works in 'nero eval'");
         Type tl = gen_expr(*e.lhs);
         g_.push(RAX);
         depth_++;

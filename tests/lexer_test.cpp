@@ -59,6 +59,12 @@ int main() {
     assert(throws("\"a\\qb\""));        // unknown escape
     assert(throws("\"abc\\"));          // ends after a backslash
 
+    // step 1: booleans, lists, records, logic, emit
+    assert((kinds("emit [a.b]") ==
+            std::vector<T>{T::Emit, T::LBracket, T::Ident, T::Dot, T::Ident, T::RBracket, T::Newline, T::End}));
+    assert((kinds("true false and or not") ==
+            std::vector<T>{T::True, T::False, T::And, T::Or, T::Not, T::Newline, T::End}));
+
     std::puts("all lexer tests passed");
     return 0;
 }

@@ -5,3 +5,7 @@ lexer_test
 parser_test
 out.bin
 codegen_test
+eval_test
+schema_test
+flow_test
+yaml_test

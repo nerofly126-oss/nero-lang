@@ -8,8 +8,10 @@
 enum class Tok {
     Number, String, Ident,
     Let, While, If, Else, Print, Fn, Return,
+    True, False, Emit, And, Or, Not, Type, For, In, Interp,
     Plus, Minus, Star, Slash, Percent,
     LParen, RParen, LBrace, RBrace, Comma, Colon, Arrow,
+    LBracket, RBracket, Dot,
     Assign, Eq, Ne, Lt, Le, Gt, Ge,
     Newline, End
 };
@@ -26,6 +28,16 @@ inline const char* tok_name(Tok t) {
         case Tok::Print:   return "Print";
         case Tok::Fn:      return "Fn";
         case Tok::Return:  return "Return";
+        case Tok::True:    return "True";
+        case Tok::False:   return "False";
+        case Tok::Emit:    return "Emit";
+        case Tok::And:     return "And";
+        case Tok::Or:      return "Or";
+        case Tok::Not:     return "Not";
+        case Tok::Type:    return "Type";
+        case Tok::For:     return "For";
+        case Tok::In:      return "In";
+        case Tok::Interp:  return "Interp";
         case Tok::Plus:    return "Plus";
         case Tok::Minus:   return "Minus";
         case Tok::Star:    return "Star";
@@ -35,6 +47,9 @@ inline const char* tok_name(Tok t) {
         case Tok::RParen:  return "RParen";
         case Tok::LBrace:  return "LBrace";
         case Tok::RBrace:  return "RBrace";
+        case Tok::LBracket: return "LBracket";
+        case Tok::RBracket: return "RBracket";
+        case Tok::Dot:     return "Dot";
         case Tok::Comma:   return "Comma";
         case Tok::Colon:   return "Colon";
         case Tok::Arrow:   return "Arrow";
@@ -51,16 +66,27 @@ inline const char* tok_name(Tok t) {
     return "?";
 }
 
+// One piece of a string with {expressions} inside: literal text, or the source text of an expression.
+struct StrPart {
+    bool expr = false;
+    std::string text;
+    int line = 0, col = 0;     // where an expression's source starts, so errors inside it point at the right place
+};
+
 struct Token {
     Tok kind;
     std::string text;   // for String tokens this is the decoded content, escapes already resolved
     int64_t value = 0;
     int line = 0, col = 0;
+    std::vector<StrPart> parts;   // Interp tokens only
+
+    Token(Tok k = Tok::End, std::string t = "", int64_t v = 0, int l = 0, int c = 0)
+        : kind(k), text(std::move(t)), value(v), line(l), col(c) {}
 };
 
 class Lexer {
 public:
-    explicit Lexer(std::string src) : src_(std::move(src)) {}
+    explicit Lexer(std::string src, int line = 1, int col = 1) : src_(std::move(src)), line_(line), col_(col) {}
 
     std::vector<Token> tokenize() {
         std::vector<Token> out;
@@ -81,7 +107,11 @@ public:
             }
 
             if (c == '"') {
-                out.push_back({Tok::String, read_string(l, cl), 0, l, cl});
+                std::vector<StrPart> parts;
+                std::string text = read_string(l, cl, parts);
+                Token t(parts.empty() ? Tok::String : Tok::Interp, parts.empty() ? text : "a string with {...}", 0, l, cl);
+                t.parts = std::move(parts);
+                out.push_back(std::move(t));
                 continue;
             }
 
@@ -104,6 +134,9 @@ public:
                     {"let", Tok::Let}, {"while", Tok::While}, {"if", Tok::If},
                     {"else", Tok::Else}, {"print", Tok::Print},
                     {"fn", Tok::Fn}, {"return", Tok::Return},
+                    {"true", Tok::True}, {"false", Tok::False}, {"emit", Tok::Emit},
+                    {"and", Tok::And}, {"or", Tok::Or}, {"not", Tok::Not},
+                    {"type", Tok::Type}, {"for", Tok::For}, {"in", Tok::In},
                 };
                 size_t start = pos_;
                 while (pos_ < src_.size() && (is_alpha(src_[pos_]) || is_digit(src_[pos_]))) advance();
@@ -129,6 +162,9 @@ public:
                 case '{': kind = Tok::LBrace; break;
                 case '}': kind = Tok::RBrace; break;
                 case ',': kind = Tok::Comma; break;
+                case '[': kind = Tok::LBracket; break;
+                case ']': kind = Tok::RBracket; break;
+                case '.': kind = Tok::Dot; break;
                 case ':': kind = Tok::Colon; break;
                 case '=':
                     if (peek(1) == '=') { kind = Tok::Eq; text = "=="; }
@@ -174,14 +210,45 @@ private:
         pos_++;
     }
 
-    // reads a string literal starting at the opening quote, resolving \n \t \" and \\ escapes
-    std::string read_string(int l, int cl) {
+    // Reads a string literal starting at the opening quote, resolving \n \t \" \\ \{ \} escapes.
+    // A {expression} inside the quotes becomes a part, and the caller gets an Interp token.
+    std::string read_string(int l, int cl, std::vector<StrPart>& parts) {
         advance();  // opening quote
         std::string s;
         while (true) {
             if (pos_ >= src_.size() || src_[pos_] == '\n') fail(l, cl, "unterminated string");
             char d = src_[pos_];
             if (d == '"') { advance(); break; }
+            if (d == '{') {
+                advance();  // '{'
+                int el = line_, ec = col_;
+                size_t start = pos_;
+                int depth = 1;
+                while (true) {
+                    if (pos_ >= src_.size() || src_[pos_] == '\n') fail(l, cl, "unterminated '{' in a string (write \\{ for a literal brace)");
+                    char x = src_[pos_];
+                    if (x == '"') {   // a string inside the expression: skip over it
+                        advance();
+                        while (pos_ < src_.size() && src_[pos_] != '"' && src_[pos_] != '\n') {
+                            if (src_[pos_] == '\\') advance();
+                            if (pos_ < src_.size() && src_[pos_] != '\n') advance();
+                        }
+                        if (pos_ >= src_.size() || src_[pos_] != '"') fail(l, cl, "unterminated '{' in a string (write \\{ for a literal brace)");
+                    } else if (x == '{') {
+                        depth++;
+                    } else if (x == '}' && --depth == 0) {
+                        break;
+                    }
+                    advance();
+                }
+                std::string code = src_.substr(start, pos_ - start);
+                advance();  // '}'
+                if (code.find_first_not_of(" \t\r") == std::string::npos)
+                    fail(el, ec - 1, "empty {} in a string (write \\{\\} for literal braces)");
+                if (!s.empty()) { parts.push_back({false, s, 0, 0}); s.clear(); }
+                parts.push_back({true, code, el, ec});
+                continue;
+            }
             if (d == '\\') {
                 advance();
                 if (pos_ >= src_.size() || src_[pos_] == '\n') fail(l, cl, "unterminated string");
@@ -191,6 +258,8 @@ private:
                     case 't':  s += '\t'; break;
                     case '"':  s += '"'; break;
                     case '\\': s += '\\'; break;
+                    case '{':  s += '{'; break;
+                    case '}':  s += '}'; break;
                     default:   fail(line_, col_, std::string("unknown escape '\\") + e + "'");
                 }
                 advance();
@@ -199,6 +268,7 @@ private:
                 advance();
             }
         }
+        if (!parts.empty() && !s.empty()) parts.push_back({false, s, 0, 0});
         return s;
     }
 

@@ -1,0 +1,12 @@
+# run with: ./nero eval examples/bad_config.nero
+# YAML would happily ship port: "8080". This refuses.
+type Service {
+    name: str
+    port: int
+    replicas: int = 1
+}
+
+emit Service {
+    name: "web",
+    port: "8080",
+}

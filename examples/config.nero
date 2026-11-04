@@ -1,0 +1,29 @@
+# run with: ./nero eval examples/config.nero
+type Port {
+    number: int
+    protocol: str = "tcp"
+}
+
+type Service {
+    name: str
+    image: str
+    replicas: int = 1
+    ports: [Port]
+    debug: bool
+    labels: record
+}
+
+fn web(env: str, version: str) -> Service {
+    return Service {
+        name: "web-{env}",
+        image: "myapp:{version}",
+        replicas: if env == "prod" { 5 } else if env == "staging" { 2 } else { 1 },
+        ports: [Port { number: 8080 }, Port { number: 9090, protocol: "udp" }],
+        debug: env != "prod",
+        labels: {"app.kubernetes.io/name": "web", env: env},
+    }
+}
+
+for env in ["dev", "staging", "prod"] {
+    emit web(env, "1.4.2")
+}
