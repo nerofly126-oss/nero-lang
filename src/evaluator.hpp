@@ -1,6 +1,7 @@
 #pragma once
 #include "ast.hpp"
 #include <cstdio>
+#include <cstdlib>
 #include <ostream>
 #include <string>
 #include <cstring>
@@ -11,9 +12,9 @@
 // "nero eval": a tree walking evaluator over the same AST as the compiler, but on
 // richer values. A record keeps its fields in the order they were written.
 struct Value {
-    enum Kind { Int, Str, Bool, List, Record } kind = Int;
+    enum Kind { Int, Str, Bool, List, Record, Secret } kind = Int;
     int64_t i = 0;                   // Int, or 0 and 1 for Bool
-    std::string s;                   // Str
+    std::string s;                   // Str, or the NAME of a Secret (its value is never read)
     std::vector<std::string> keys;   // Record: field names, parallel to items
     std::vector<Value> items;        // List elements, or Record field values
     std::string type_name;           // a record built from a schema carries the schema's name
@@ -31,6 +32,7 @@ inline const char* kind_name(Value::Kind k) {
         case Value::Bool:   return "bool";
         case Value::List:   return "list";
         case Value::Record: return "record";
+        case Value::Secret: return "secret";
     }
     return "?";
 }
@@ -47,6 +49,7 @@ inline Value::Kind kind_of(Type t) {
         case Type::List:   return Value::List;
         case Type::Record:
         case Type::Named:  return Value::Record;
+        case Type::Secret: return Value::Secret;
     }
     return Value::Int;
 }
@@ -69,6 +72,7 @@ inline std::string type_phrase(const TypeRef& t) {
         case Type::Record: return "a record";
         case Type::List:   return t.elem ? "a list of " + typeref_str(*t.elem) : "a list";
         case Type::Named:  return with_article(t.name);
+        case Type::Secret: return "a secret";
     }
     return "?";
 }
@@ -78,6 +82,7 @@ inline std::string mismatch(const TypeRef& t, const Value& v) {
     switch (t.kind) {
         case Type::Int:
         case Type::Str:
+        case Type::Secret:
         case Type::Bool:   return v.kind == kind_of(t.kind) ? "" : describe_value(v);
         case Type::Record: return v.kind == Value::Record ? "" : describe_value(v);
         case Type::List:
@@ -99,6 +104,30 @@ inline std::string mismatch(const TypeRef& t, const Value& v) {
 }
 
 inline Value default_value(Type t) { Value v; v.kind = kind_of(t); return v; }
+
+// A secret is only a reference, so a reference is all that is ever written out.
+inline Value secret_as_record(const Value& v) {
+    Value r = Value::record();
+    r.keys.push_back("secretRef");
+    r.items.push_back(Value::text(v.s));
+    return r;
+}
+
+// A deep copy with every secret replaced by its reference record.
+inline Value refs_as_records(const Value& v) {
+    if (v.kind == Value::Secret) return secret_as_record(v);
+    if (v.kind != Value::List && v.kind != Value::Record) return v;
+    Value out = v;
+    for (Value& item : out.items) item = refs_as_records(item);
+    return out;
+}
+
+inline bool holds_secret(const Value& v) {
+    if (v.kind == Value::Secret) return true;
+    for (const Value& item : v.items)
+        if (holds_secret(item)) return true;
+    return false;
+}
 
 inline void json_string(const std::string& s, std::string& out) {
     out += '"';
@@ -128,6 +157,7 @@ inline void json_write(const Value& v, std::string& out, bool pretty, int level)
         case Value::Int:  out += std::to_string(v.i); break;
         case Value::Bool: out += v.i ? "true" : "false"; break;
         case Value::Str:  json_string(v.s, out); break;
+        case Value::Secret: json_write(secret_as_record(v), out, pretty, level); break;
         case Value::List:
         case Value::Record: {
             bool rec = v.kind == Value::Record;
@@ -195,6 +225,7 @@ inline std::string yaml_scalar(const Value& v) {
         case Value::Str:    return yaml_text(v.s);
         case Value::List:   return "[]";     // only empty collections are written inline
         case Value::Record: return "{}";
+        case Value::Secret: return "{}";     // never reached: to_yaml turns secrets into records first
     }
     return "";
 }
@@ -218,7 +249,8 @@ inline std::string yaml_block(const Value& v, int indent) {
     return out;
 }
 
-inline std::string to_yaml(const Value& v) {
+inline std::string to_yaml(const Value& original) {
+    Value v = refs_as_records(original);
     return yaml_is_block(v) ? yaml_block(v, 0) : yaml_scalar(v) + "\n";
 }
 
@@ -227,7 +259,8 @@ inline bool deep_eq(const Value& a, const Value& b) {
     switch (a.kind) {
         case Value::Int:
         case Value::Bool: return a.i == b.i;
-        case Value::Str:  return a.s == b.s;
+        case Value::Str:
+        case Value::Secret: return a.s == b.s;
         case Value::List:
             if (a.items.size() != b.items.size()) return false;
             for (size_t k = 0; k < a.items.size(); k++)
@@ -251,7 +284,9 @@ public:
     Evaluator(const Program& prog, std::ostream& out, OutFormat fmt = OutFormat::Json) : prog_(prog), out_(out), fmt_(fmt) {}
 
     void run() {
+        struct FileReset { ~FileReset() { cur_file_ = nullptr; } } file_reset;
         for (const Func& f : prog_.funcs) {
+            cur_file_ = &f.file;
             if (is_builtin(f.name)) fail(f.line, f.col, "'" + f.name + "' is a builtin and cannot be redefined");
             if (funcs_.count(f.name)) fail(f.line, f.col, "function '" + f.name + "' is already defined");
             for (size_t i = 0; i < f.params.size(); i++)
@@ -263,6 +298,7 @@ public:
         for (const TypeDecl& d : prog_.types)            // bad defaults are reported before anything runs
             for (const FieldDecl& fd : d.fields)
                 if (fd.def) default_of(fd);
+        cur_file_ = &prog_.file;
         Frame top;
         exec_stmts(prog_.stmts, top);
     }
@@ -287,11 +323,18 @@ private:
     std::unordered_set<const FieldDecl*> defaulting_;           // defaults being evaluated right now
     int depth_ = 0;
 
+    // The file whose code is running right now, so an error can say which file it is in.
+    // "" (or none) for source that did not come from a file: then errors stay "line:col: message".
+    static inline const std::string* cur_file_ = nullptr;
+
     [[noreturn]] static void fail(int line, int col, const std::string& msg) {
-        throw std::runtime_error(std::to_string(line) + ":" + std::to_string(col) + ": " + msg);
+        std::string where = cur_file_ && !cur_file_->empty() ? *cur_file_ + ":" : "";
+        throw std::runtime_error(where + std::to_string(line) + ":" + std::to_string(col) + ": " + msg);
     }
 
-    static bool is_builtin(const std::string& n) { return n == "len" || n == "str" || n == "range"; }
+    static bool is_builtin(const std::string& n) {
+        return n == "len" || n == "str" || n == "range" || n == "env" || n == "secret";
+    }
 
     static std::string show(const Value& v) { return v.kind == Value::Str ? v.s : to_json(v, false); }
 
@@ -518,11 +561,14 @@ private:
         if (defaulting_.count(&fd)) fail(fd.def->line, fd.def->col, "the default of field '" + fd.name + "' refers to itself");
         defaulting_.insert(&fd);
         Frame none;
+        const std::string* saved_file = cur_file_;
+        cur_file_ = &fd.file;                      // errors in a default point into the file that declared it
         Value v = eval(*fd.def, none);
         std::string m = mismatch(fd.type, v);
         if (!m.empty())
             fail(fd.def->line, fd.def->col, "the default of field '" + fd.name + "' must be " + type_phrase(fd.type) + ", got " + m);
         defaulting_.erase(&fd);
+        cur_file_ = saved_file;
         return defaults_[&fd] = std::move(v);
     }
 
@@ -599,6 +645,7 @@ private:
         Value r = eval(*e.rhs, f);
 
         if (e.op == Tok::Eq || e.op == Tok::Ne) {
+            if (holds_secret(l) || holds_secret(r)) fail(e.line, e.col, "secrets cannot be compared");
             if (l.kind != r.kind)
                 fail(e.line, e.col, "cannot compare " + kind_an(l.kind) + " with " + kind_an(r.kind));
             bool eq = deep_eq(l, r);
@@ -650,8 +697,40 @@ private:
         }
     }
 
+    // env("NAME") reads an environment variable, env("NAME", "fallback") gives it a default.
+    // secret("NAME") is only a reference to a secret. Its value is never read, so it cannot end up in the output.
+    Value eval_env(const Expr& e, Frame& f) {
+        size_t n = e.args.size();
+        bool is_secret = e.name == "secret";
+        if (n < 1 || n > (is_secret ? 1u : 2u))
+            fail(e.line, e.col, "'" + e.name + "' takes " + (is_secret ? "1 argument" : "1 or 2 arguments") +
+                                    ", got " + std::to_string(n));
+        const Expr& a = *e.args[0];
+        Value name = eval(a, f);
+        if (name.kind != Value::Str) fail(a.line, a.col, "'" + e.name + "' needs the name as a str, got " + describe_value(name));
+        if (name.s.empty()) fail(a.line, a.col, "'" + e.name + "' needs a name that is not empty");
+        if (is_secret) {
+            Value v;
+            v.kind = Value::Secret;
+            v.s = name.s;
+            return v;
+        }
+        Value fallback;
+        if (n == 2) {
+            fallback = eval(*e.args[1], f);        // checked even when the variable is set, so a typo shows up everywhere
+            if (fallback.kind != Value::Str)
+                fail(e.args[1]->line, e.args[1]->col, "the fallback of 'env' must be a str, got " + describe_value(fallback));
+        }
+        if (const char* got = std::getenv(name.s.c_str())) return Value::text(got);
+        if (n == 2) return fallback;
+        fail(e.line, e.col, "environment variable '" + name.s + "' is not set (env(\"" + name.s +
+                                "\", \"...\") gives it a fallback)");
+    }
+
     Value eval_call(const Expr& e, Frame& f) {
         size_t n = e.args.size();
+
+        if (e.name == "env" || e.name == "secret") return eval_env(e, f);
 
         if (is_builtin(e.name)) {
             if (n != 1) fail(e.line, e.col, "'" + e.name + "' takes 1 argument, got " + std::to_string(n));
@@ -701,7 +780,10 @@ private:
             callee.decl[fn.params[i]] = nullptr;
         }
         if (++depth_ > MAX_DEPTH) fail(e.line, e.col, "recursion too deep in '" + e.name + "'");
+        const std::string* caller_file = cur_file_;
+        cur_file_ = &fn.file;                      // errors inside the body point into the file that defined it
         exec_stmts(fn.body, callee);
+        cur_file_ = caller_file;
         depth_--;
         return callee.returned ? std::move(callee.ret) : implicit_return(fn, e.line, e.col, false);
     }

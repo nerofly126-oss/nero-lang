@@ -21,7 +21,9 @@
 //   primary   := NUMBER | IDENT | IDENT "(" [ expr { "," expr } ] ")" | "(" expr ")"
 class Parser {
 public:
-    explicit Parser(std::vector<Token> toks) : toks_(std::move(toks)) {
+    // known_types: schema names that come from imported files. file: stamped on every function and schema.
+    explicit Parser(std::vector<Token> toks, std::set<std::string> known_types = {}, std::string file = "")
+        : toks_(std::move(toks)), type_names_(std::move(known_types)), file_(std::move(file)) {
         // schema names are collected up front, so a type can be used above its declaration
         for (size_t i = 0; i + 1 < toks_.size(); i++)
             if (toks_[i].kind == Tok::Type && toks_[i + 1].kind == Tok::Ident) type_names_.insert(toks_[i + 1].text);
@@ -29,11 +31,17 @@ public:
 
     Program parse_program() {
         Program prog;
+        prog.file = file_;
         skip_newlines();
         while (!at(Tok::End)) {
-            if (at(Tok::Fn)) prog.funcs.push_back(parse_func());
-            else if (at(Tok::Type)) prog.types.push_back(parse_type_decl());
-            else prog.stmts.push_back(parse_stmt());
+            if (at(Tok::Import)) {
+                prog.imports.push_back(parse_import());
+            } else {
+                if (at(Tok::Fn)) prog.funcs.push_back(parse_func());
+                else if (at(Tok::Type)) prog.types.push_back(parse_type_decl());
+                else prog.stmts.push_back(parse_stmt());
+                body_started_ = true;
+            }
             end_of_stmt();
         }
         return prog;
@@ -44,6 +52,8 @@ private:
     size_t pos_ = 0;
     std::set<std::string> type_names_;   // every schema name in the file
     std::set<std::string> declared_;     // schemas seen so far, to catch duplicates
+    std::string file_;                   // the source file, stamped on functions and schemas for error messages
+    bool body_started_ = false;          // an import has to come before everything else
 
     const Token& cur() const { return toks_[pos_]; }
     const Token& peek_tok() const { return toks_[pos_ + 1 < toks_.size() ? pos_ + 1 : pos_]; }
@@ -82,6 +92,17 @@ private:
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
     }
 
+    // import "path.nero"   (top level, before everything else, a plain string)
+    ImportDecl parse_import() {
+        const Token& t = cur();
+        if (body_started_) fail(t, "'import' must come before every function, type and statement in the file");
+        next();  // 'import'
+        if (at(Tok::Interp)) fail(cur(), "an import path must be a plain string, without {...}");
+        const Token& p = expect(Tok::String, "a file path in quotes after 'import'");
+        if (p.text.empty()) fail(p, "the import path is empty");
+        return ImportDecl{p.text, t.line, t.col};
+    }
+
     TypeRef parse_typeref() {
         const Token& t = cur();
         TypeRef r;
@@ -101,9 +122,10 @@ private:
             else if (t.text == "bool")   r.kind = Type::Bool;
             else if (t.text == "list")   r.kind = Type::List;
             else if (t.text == "record") r.kind = Type::Record;
+            else if (t.text == "secret") r.kind = Type::Secret;
             else if (type_names_.count(t.text)) { r.kind = Type::Named; r.name = t.text; }
             else {
-                std::vector<std::string> known = {"int", "str", "bool", "list", "record"};
+                std::vector<std::string> known = {"int", "str", "bool", "list", "record", "secret"};
                 known.insert(known.end(), type_names_.begin(), type_names_.end());
                 std::string hint = closest(t.text, known);
                 fail(t, "unknown type '" + t.text + "'" + (hint.empty() ? "" : " (did you mean '" + hint + "'?)"));
@@ -121,7 +143,8 @@ private:
         d.name = n.text;
         d.line = n.line;
         d.col = n.col;
-        if (n.text == "int" || n.text == "str" || n.text == "bool" || n.text == "list" || n.text == "record")
+        d.file = file_;
+        if (n.text == "int" || n.text == "str" || n.text == "bool" || n.text == "list" || n.text == "record" || n.text == "secret")
             fail(n, "'" + n.text + "' is a builtin type and cannot be redeclared");
         if (!declared_.insert(n.text).second) fail(n, "type '" + n.text + "' is already declared");
         expect(Tok::LBrace, "'{' after the type name");
@@ -134,6 +157,7 @@ private:
             f.name = k.text;
             f.line = k.line;
             f.col = k.col;
+            f.file = file_;
             for (const FieldDecl& other : d.fields)
                 if (other.name == f.name) fail(k, "duplicate field '" + f.name + "' in type " + d.name);
             next();
@@ -176,6 +200,7 @@ private:
         Func f;
         f.line = cur().line;
         f.col = cur().col;
+        f.file = file_;
         next();  // 'fn'
         f.name = expect(Tok::Ident, "a function name after 'fn'").text;
         expect(Tok::LParen, "'(' after the function name");
@@ -258,6 +283,8 @@ private:
                 fail(t, "functions can only be declared at the top level");
             case Tok::Type:
                 fail(t, "types can only be declared at the top level");
+            case Tok::Import:
+                fail(t, "'import' can only be at the top level, before everything else");
             default:
                 fail(t, "unexpected " + describe(t) + " at the start of a statement");
         }

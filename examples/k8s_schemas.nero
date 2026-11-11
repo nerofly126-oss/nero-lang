@@ -1,0 +1,81 @@
+# The Kubernetes schemas used by the demos. Use them with: import "k8s_schemas.nero"
+
+type ObjectMeta {
+    name: str
+    labels: record = {}
+}
+
+type TemplateMeta {
+    labels: record = {}
+}
+
+type ContainerPort {
+    containerPort: int
+}
+
+type EnvVar {
+    name: str
+    value: str
+}
+
+type ResourceList {
+    cpu: str
+    memory: str
+}
+
+type Resources {
+    requests: ResourceList
+    limits: ResourceList
+}
+
+type Container {
+    name: str
+    image: str
+    ports: [ContainerPort]
+    env: [EnvVar] = []
+    resources: Resources
+}
+
+type PodSpec {
+    containers: [Container]
+}
+
+type PodTemplate {
+    metadata: TemplateMeta
+    spec: PodSpec
+}
+
+type LabelSelector {
+    matchLabels: record
+}
+
+type DeploymentSpec {
+    replicas: int
+    selector: LabelSelector
+    template: PodTemplate
+}
+
+type Deployment {
+    apiVersion: str = "apps/v1"
+    kind: str = "Deployment"
+    metadata: ObjectMeta
+    spec: DeploymentSpec
+}
+
+type ServicePort {
+    port: int
+    targetPort: int
+}
+
+type ServiceSpec {
+    selector: record
+    ports: [ServicePort]
+    type: str = "ClusterIP"
+}
+
+type Service {
+    apiVersion: str = "v1"
+    kind: str = "Service"
+    metadata: ObjectMeta
+    spec: ServiceSpec
+}

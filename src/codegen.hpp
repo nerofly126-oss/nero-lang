@@ -76,10 +76,12 @@ public:
     explicit CodeGen(Grimoire& g) : g_(g) {}
 
     NeroFn compile(const Program& prog) {
+        if (!prog.imports.empty())
+            fail(prog.imports[0].line, prog.imports[0].col, "'import' only works in 'nero eval'");
         if (!prog.types.empty())
             fail(prog.types[0].line, prog.types[0].col, "'type' only works in 'nero eval'");
         for (const Func& f : prog.funcs) {
-            if (find_builtin(f.name) || f.name == "range") fail(f.line, f.col, "'" + f.name + "' is a builtin and cannot be redefined");
+            if (find_builtin(f.name) || f.name == "range" || f.name == "env" || f.name == "secret") fail(f.line, f.col, "'" + f.name + "' is a builtin and cannot be redefined");
             if (funcs_.count(f.name)) fail(f.line, f.col, "function '" + f.name + "' is already defined");
             if (f.params.size() > 6) fail(f.line, f.col, "function '" + f.name + "' has too many parameters (max 6)");
             for (const TypeRef& t : f.param_refs) need_basic(t, f.line, f.col);
@@ -153,7 +155,7 @@ private:
     }
 
     static void need_basic(const TypeRef& t, int line, int col) {
-        if (t.kind == Type::Bool || t.kind == Type::List || t.kind == Type::Record || t.kind == Type::Named)
+        if (t.kind == Type::Bool || t.kind == Type::List || t.kind == Type::Record || t.kind == Type::Named || t.kind == Type::Secret)
             fail(line, col, std::string("the type '") + typeref_str(t) + "' only works in 'nero eval'");
     }
 
@@ -410,6 +412,8 @@ private:
 
     Type gen_call(const Expr& e) {
         size_t n = e.args.size();
+
+        if (e.name == "env" || e.name == "secret") fail(e.line, e.col, "'" + e.name + "' only works in 'nero eval'");
 
         if (const Builtin* b = find_builtin(e.name)) {
             if (n != 1) fail(e.line, e.col, "'" + e.name + "' takes 1 argument, got " + std::to_string(n));

@@ -9,3 +9,4 @@ eval_test
 schema_test
 flow_test
 yaml_test
+import_test

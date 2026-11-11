@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-enum class Type { Int, Str, Bool, List, Record, Named };
+enum class Type { Int, Str, Bool, List, Record, Named, Secret };
 
 inline const char* type_name(Type t) {
     switch (t) {
@@ -16,6 +16,7 @@ inline const char* type_name(Type t) {
         case Type::List:   return "list";
         case Type::Record: return "record";
         case Type::Named:  return "named";
+        case Type::Secret: return "secret";
     }
     return "?";
 }
@@ -93,12 +94,14 @@ struct FieldDecl {
     std::string name;
     TypeRef type;
     ExprPtr def;                  // default value, empty when the field is required
+    std::string file;             // the source file it was written in ("" when there is none)
     int line = 0, col = 0;
 };
 
 struct TypeDecl {
     std::string name;
     std::vector<FieldDecl> fields;
+    std::string file;
     int line = 0, col = 0;
 };
 
@@ -112,13 +115,21 @@ struct Func {
     TypeRef ret_ref;
     bool ret_explicit = false;
     std::vector<StmtPtr> body;
+    std::string file;
+    int line = 0, col = 0;
+};
+
+struct ImportDecl {
+    std::string path;           // as written in the source
     int line = 0, col = 0;
 };
 
 struct Program {
-    std::vector<TypeDecl> types;
+    std::vector<ImportDecl> imports;   // only the file that was run keeps these, after loading
+    std::vector<TypeDecl> types;       // after loading: the types of every imported file too
     std::vector<Func> funcs;
     std::vector<StmtPtr> stmts;
+    std::string file;                  // the file the statements came from
 };
 
 inline const char* op_str(Tok t) {
@@ -241,6 +252,7 @@ inline void dump_stmts(const std::vector<StmtPtr>& stmts, int indent, std::ostre
 
 inline std::string dump_program(const Program& p) {
     std::ostringstream os;
+    for (const ImportDecl& im : p.imports) os << "import " << quote(im.path) << "\n";
     for (const TypeDecl& d : p.types) {
         os << "type " << d.name << "\n";
         for (const FieldDecl& fd : d.fields) {

@@ -1,6 +1,6 @@
 #include "codegen.hpp"
 #include "evaluator.hpp"
-#include "parser.hpp"
+#include "loader.hpp"
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -31,11 +31,13 @@ int main(int argc, char** argv) {
     }
     std::ifstream f(path);
     if (!f) { std::cerr << "cannot open " << path << "\n"; return 1; }
-    std::stringstream ss;
-    ss << f.rdbuf();
     try {
-        std::vector<Token> tokens = Lexer(ss.str()).tokenize();
         if (mode == "--tokens") {
+            std::stringstream ss;
+            ss << f.rdbuf();
+            std::vector<Token> tokens;
+            try { tokens = Lexer(ss.str()).tokenize(); }
+            catch (const std::exception& e) { throw std::runtime_error(std::string(path) + ":" + e.what()); }
             for (const Token& t : tokens) {
                 std::string p = std::to_string(t.line) + ":" + std::to_string(t.col);
                 std::cout << std::left << std::setw(7) << p << std::setw(9) << tok_name(t.kind);
@@ -48,7 +50,7 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        Program prog = Parser(std::move(tokens)).parse_program();
+        Program prog = Loader().load(path);    // the file and everything it imports, errors already say which file
         if (mode == "--ast") {
             std::cout << dump_program(prog);
             return 0;
@@ -60,7 +62,9 @@ int main(int argc, char** argv) {
         }
 
         Grimoire g;
-        NeroFn fn = CodeGen(g).compile(prog);
+        NeroFn fn = nullptr;
+        try { fn = CodeGen(g).compile(prog); }
+        catch (const std::exception& e) { throw std::runtime_error(std::string(path) + ":" + e.what()); }
         if (mode == "--bin") {
             std::ofstream("out.bin", std::ios::binary)
                 .write(reinterpret_cast<const char*>(g.bytes().data()), g.bytes().size());

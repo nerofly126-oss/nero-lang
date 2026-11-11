@@ -8,7 +8,7 @@
 enum class Tok {
     Number, String, Ident,
     Let, While, If, Else, Print, Fn, Return,
-    True, False, Emit, And, Or, Not, Type, For, In, Interp,
+    True, False, Emit, And, Or, Not, Type, For, In, Interp, Import,
     Plus, Minus, Star, Slash, Percent,
     LParen, RParen, LBrace, RBrace, Comma, Colon, Arrow,
     LBracket, RBracket, Dot,
@@ -38,6 +38,7 @@ inline const char* tok_name(Tok t) {
         case Tok::For:     return "For";
         case Tok::In:      return "In";
         case Tok::Interp:  return "Interp";
+        case Tok::Import:  return "Import";
         case Tok::Plus:    return "Plus";
         case Tok::Minus:   return "Minus";
         case Tok::Star:    return "Star";
@@ -137,6 +138,7 @@ public:
                     {"true", Tok::True}, {"false", Tok::False}, {"emit", Tok::Emit},
                     {"and", Tok::And}, {"or", Tok::Or}, {"not", Tok::Not},
                     {"type", Tok::Type}, {"for", Tok::For}, {"in", Tok::In},
+                    {"import", Tok::Import},
                 };
                 size_t start = pos_;
                 while (pos_ < src_.size() && (is_alpha(src_[pos_]) || is_digit(src_[pos_]))) advance();
