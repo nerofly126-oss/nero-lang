@@ -1,4 +1,6 @@
+#include "checker.hpp"
 #include "codegen.hpp"
+#include "diff.hpp"
 #include "evaluator.hpp"
 #include "loader.hpp"
 #include <fstream>
@@ -8,6 +10,8 @@
 #include <vector>
 
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::string(argv[1]) == "diff")
+        return diff_main(std::vector<std::string>(argv + 2, argv + argc), std::cout, std::cerr);
     OutFormat fmt = OutFormat::Json;
     bool format_given = false;
     std::vector<std::string> pos;
@@ -21,8 +25,8 @@ int main(int argc, char** argv) {
     const char* path = nullptr;
     if (pos.size() == 1) { mode = "run"; path = pos[0].c_str(); }
     else if (pos.size() == 2) { mode = pos[0]; path = pos[1].c_str(); }
-    if (!path || (mode != "run" && mode != "eval" && mode != "--tokens" && mode != "--ast" && mode != "--bin")) {
-        std::cerr << "usage: nero [run|eval|--tokens|--ast|--bin] <file.nero> [--yaml|--json]\n";
+    if (!path || (mode != "run" && mode != "eval" && mode != "--tokens" && mode != "--ast" && mode != "--bin" && mode != "check")) {
+        std::cerr << "usage: nero [run|eval|check|--tokens|--ast|--bin] <file.nero> [--yaml|--json]\n";
         return 1;
     }
     if (format_given && mode != "eval") {
@@ -54,6 +58,17 @@ int main(int argc, char** argv) {
         if (mode == "--ast") {
             std::cout << dump_program(prog);
             return 0;
+        }
+        if (mode == "check") {
+            std::vector<Diagnostic> diags = Checker().check(prog);
+            if (diags.empty()) {
+                std::cout << "ok: nothing provably wrong in " << path << "\n";
+                return 0;
+            }
+            for (const Diagnostic& d : diags)
+                std::cerr << "error: " << (d.file.empty() ? "" : d.file + ":") << d.line << ":" << d.col << ": " << d.message << "\n";
+            std::cerr << diags.size() << (diags.size() == 1 ? " problem" : " problems") << " found\n";
+            return 1;
         }
         if (mode == "eval") {
             Evaluator(prog, std::cout, fmt).run();

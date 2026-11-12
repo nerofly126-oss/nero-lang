@@ -1,0 +1,17 @@
+# eval is happy, because forgotten() is never called:   ./nero eval examples/check_demo.nero
+# check is not:                                          ./nero check examples/check_demo.nero
+
+type Port {
+    number: int
+    protocol: str = "tcp"
+}
+
+fn web() -> Port {
+    return Port { number: 80 }
+}
+
+fn forgotten() -> Port {
+    return Port { number: "8080", protocl: "udp" }
+}
+
+emit web()

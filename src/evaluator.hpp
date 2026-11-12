@@ -283,6 +283,9 @@ class Evaluator {
 public:
     Evaluator(const Program& prog, std::ostream& out, OutFormat fmt = OutFormat::Json) : prog_(prog), out_(out), fmt_(fmt) {}
 
+    // diff mode: emitted values are handed to this list instead of being printed
+    void collect(std::vector<Value>& into) { collect_ = &into; }
+
     void run() {
         struct FileReset { ~FileReset() { cur_file_ = nullptr; } } file_reset;
         for (const Func& f : prog_.funcs) {
@@ -317,6 +320,7 @@ private:
     std::ostream& out_;
     OutFormat fmt_;
     int emitted_ = 0;
+    std::vector<Value>* collect_ = nullptr;
     std::unordered_map<std::string, const Func*> funcs_;
     std::unordered_map<std::string, const TypeDecl*> types_;
     std::unordered_map<const FieldDecl*, Value> defaults_;      // evaluated once, on first use
@@ -381,6 +385,7 @@ private:
                 break;
             case Stmt::Emit: {
                 Value v = eval(*s.expr, f);
+                if (collect_) { collect_->push_back(std::move(v)); break; }
                 if (fmt_ == OutFormat::Yaml) {
                     if (emitted_++) out_ << "---\n";      // YAML documents are separated by ---
                     out_ << to_yaml(v);

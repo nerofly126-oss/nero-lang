@@ -10,3 +10,5 @@ schema_test
 flow_test
 yaml_test
 import_test
+check_test
+diff_test
