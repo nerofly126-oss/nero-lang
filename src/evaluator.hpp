@@ -623,9 +623,11 @@ private:
 
     // What a function gives back when it falls off its end, or says a bare 'return'.
     static Value implicit_return(const Func& fn, int line, int col, bool bare) {
-        if (fn.ret_ref.kind == Type::Named)
-            fail(line, col, bare ? "a bare 'return' is not allowed in a function that returns " + fn.ret_ref.name
-                                 : "function '" + fn.name + "' ended without returning a value of type " + fn.ret_ref.name);
+        if (fn.ret_ref.kind == Type::Named || fn.ret_ref.kind == Type::Secret) {
+            std::string what = fn.ret_ref.kind == Type::Secret ? "secret" : fn.ret_ref.name;
+            fail(line, col, bare ? "a bare 'return' is not allowed in a function that returns " + what
+                                 : "function '" + fn.name + "' ended without returning a value of type " + what);
+        }
         return default_value(fn.ret);
     }
 

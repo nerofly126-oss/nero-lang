@@ -430,6 +430,9 @@ private:
             next();
             if (op.kind == Tok::Dot) {
                 p->kind = Expr::Field;
+                if (cur().kind == Tok::Number && p->lhs->kind == Expr::Num)
+                    fail(cur(), "there are no decimal numbers in n+, only whole numbers (write \"" + std::to_string(p->lhs->value) +
+                                    "." + cur().text + "\" as a string if you need the text)");
                 if (!is_word(cur())) fail(cur(), "expected a field name after '.', got " + describe(cur()));
                 p->name = cur().text;
                 next();

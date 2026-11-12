@@ -254,8 +254,9 @@ private:
             sc.vars[f.params[i]] = sc.reassigned.count(f.params[i]) ? generalize(t) : t;
         }
         stmts(f.body, sc);
-        if (f.ret_ref.kind == Type::Named && !always_returns(f.body))
-            error(f.line, f.col, "function '" + f.name + "' can end without returning a value of type " + f.ret_ref.name);
+        if ((f.ret_ref.kind == Type::Named || f.ret_ref.kind == Type::Secret) && !always_returns(f.body))
+            error(f.line, f.col, "function '" + f.name + "' can end without returning a value of type " +
+                                     (f.ret_ref.kind == Type::Secret ? std::string("secret") : f.ret_ref.name));
     }
 
     void stmts(const std::vector<StmtPtr>& body, Scope& sc) {
@@ -312,8 +313,9 @@ private:
                 }
                 const Func& f = *sc.func;
                 if (!s.expr) {
-                    if (f.ret_ref.kind == Type::Named)
-                        error(s.line, s.col, "a bare 'return' is not allowed in a function that returns " + f.ret_ref.name);
+                    if (f.ret_ref.kind == Type::Named || f.ret_ref.kind == Type::Secret)
+                        error(s.line, s.col, "a bare 'return' is not allowed in a function that returns " +
+                                                 (f.ret_ref.kind == Type::Secret ? std::string("secret") : f.ret_ref.name));
                     break;
                 }
                 std::string m = st_mismatch(f.ret_ref, expr(*s.expr, sc));

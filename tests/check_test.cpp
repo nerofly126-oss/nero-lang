@@ -18,6 +18,16 @@ static std::vector<std::string> chk(const std::string& src) {
 
 static bool clean(const std::string& src) { return chk(src).empty(); }
 
+// the message of whatever goes wrong first, while parsing or running ("" when nothing does)
+static std::string any_error(const std::string& src) {
+    try {
+        Program p = Parser(Lexer(src).tokenize()).parse_program();
+        std::ostringstream os;
+        Evaluator(p, os).run();
+    } catch (const std::runtime_error& e) { return e.what(); }
+    return "";
+}
+
 static bool says(const std::string& src, const std::string& needle) {
     for (const std::string& m : chk(src))
         if (m.find(needle) != std::string::npos) return true;
@@ -162,6 +172,17 @@ int main() {
         if (got[0] != want) std::printf("DISAGREE on %s\n  eval:  %s\n  check: %s\n", src, want.c_str(), got[0].c_str());
         assert(got[0] == want);
     }
+
+    // a function that returns a secret has to return one, as a function that returns a schema does
+    assert(any_error("fn f() -> secret {\n}\nprint f()").find("function 'f' ended without returning a value of type secret") != std::string::npos);
+    assert(says("fn f() -> secret {\n}", "function 'f' can end without returning a value of type secret"));
+    assert(says("fn f() -> secret {\n  return\n}", "a bare 'return' is not allowed in a function that returns secret"));
+    assert(clean("fn f() -> secret {\n  return secret(\"A\")\n}\nprint f()"));
+    // a decimal number says it is not supported, instead of complaining about a field name
+    assert(any_error("print 1.5") == "1:9: there are no decimal numbers in n+, only whole numbers (write \"1.5\" as a string if you need the text)");
+    assert(any_error("print 7.25").find("write \"7.25\" as a string") != std::string::npos);
+    assert(any_error("let r = {a: 1}\nprint r.a") == "");
+    assert(any_error("print [1][0].x").find("cannot read field") != std::string::npos);
 
     std::puts("all check tests passed");
     return 0;
