@@ -1,7 +1,7 @@
 #include "../src/diff.hpp"
 #include <cassert>
+#include <chrono>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -42,9 +42,9 @@ static Result run_diff(const std::vector<std::string>& args) {
 }
 
 int main() {
-    char templ[] = "/tmp/nero_diff_XXXXXX";
-    assert(mkdtemp(templ));
-    tmp = templ;
+    auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    tmp = (std::filesystem::temp_directory_path() / ("nero_diff_" + std::to_string(nonce))).string();
+    assert(std::filesystem::create_directory(tmp));
 
     // ---- the core: what counts as a change ----
     assert(d("emit {a: 1}", "emit {a: 1}") == "");
