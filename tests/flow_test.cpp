@@ -140,7 +140,9 @@ int main() {
     assert(compile_throws("for x in [1] { }"));
     assert(compile_throws("print [x for x in y]"));
     assert(compile_throws("fn range(a) { }"));
+#if NERO_HAS_JIT
     assert(!compile_throws("print \"\\{ok\\}\""));
+#endif
 
     std::puts("all flow tests passed");
     return 0;

@@ -2,6 +2,7 @@
 #include "../src/evaluator.hpp"
 #include "../src/loader.hpp"
 #include <cassert>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -52,9 +53,9 @@ static bool starts(const std::string& s, const std::string& prefix) { return s.c
 static bool contains(const std::string& s, const std::string& needle) { return s.find(needle) != std::string::npos; }
 
 int main() {
-    char templ[] = "/tmp/nero_import_XXXXXX";
-    assert(mkdtemp(templ));
-    tmp = templ;
+    auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    tmp = (std::filesystem::temp_directory_path() / ("nero_import_" + std::to_string(nonce))).string();
+    assert(std::filesystem::create_directory(tmp));
 
     // ---- syntax ----
     assert(ast("import \"a.nero\"\nimport \"b.nero\"\nprint 1") == "import \"a.nero\"\nimport \"b.nero\"\nprint 1\n");
