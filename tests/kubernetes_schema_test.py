@@ -42,6 +42,16 @@ def main():
     if json_documents(json_result.stdout) != documents:
         raise AssertionError("JSON and YAML output differ for the Kubernetes demo")
 
+    invalid_source = subprocess.run(
+        ["./nero", "eval", "examples/k8s_bad.nero", "--yaml"],
+        capture_output=True,
+        text=True,
+    )
+    if invalid_source.returncode == 0 or invalid_source.stdout:
+        raise AssertionError("n+ emitted a Kubernetes manifest with a string replicas value")
+    if "field 'replicas' of DeploymentSpec must be an int" not in invalid_source.stderr:
+        raise AssertionError("n+ rejected the bad manifest for an unexpected reason")
+
     kinds = [document["kind"] for document in documents]
     if kinds != ["Deployment", "Service"] * 3:
         raise AssertionError("unexpected Kubernetes document kinds: %r" % kinds)
