@@ -51,6 +51,12 @@ for line in [
     "              /tmp/ci-test",
     "          done",
     "",
+    "      - name: Install Kubernetes schema validator",
+    "        run: python3 -m pip install --disable-pip-version-check kubernetes-validate==1.37.0",
+    "",
+    "      - name: Validate Kubernetes manifests",
+    "        run: python3 tests/kubernetes_schema_test.py",
+    "",
     "      - name: Run documentation examples",
     "        run: python3 tests/docs_test.py",
 ] {

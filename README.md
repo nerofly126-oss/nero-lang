@@ -167,7 +167,7 @@ examples/          small programs, the Kubernetes demo, and the bad ones on purp
 ## What has and has not been verified
 
 - The YAML output parses back (PyYAML) to the same data as the JSON output for every evaluating example, plus a file of 68 awkward strings and keys.
-- The six generated manifests (three Deployments, three Services) pass `kubernetes-validate` in strict mode for 1.28, 1.30 and 1.33, and the validator does reject `replicas: "3"`.
+- CI uses `kubernetes-validate` 1.37.0 to validate the six generated manifests (three Deployments, three Services) against Kubernetes 1.28, 1.30 and 1.33 schemas in strict mode. It also checks that schema validation rejects `replicas: "3"`.
 - They have **not** been applied to a real cluster. If you try `./nero eval examples/k8s.nero --yaml | kubectl apply --dry-run=client -f -`, I would like to hear what happens.
 - `check` was run over every program in the test suites that evaluates successfully. It stayed quiet on all of them except three that divide by a literal zero inside a branch that never runs.
 
