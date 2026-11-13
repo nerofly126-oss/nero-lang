@@ -380,10 +380,10 @@ There is no YAML comment, anchor or block-scalar output.
 - calls to undefined functions, wrong argument counts and argument types
 - return values of the wrong type, and a function returning a schema or a secret that can end without a `return`
 - variables that are never declared, assignments of a different kind, a second `let` of one name
-- operators and conditions applied to the wrong kinds, builtins given the wrong kind, a division by a literal zero
+- operators and conditions applied to the wrong kinds, builtins given the wrong kind, a division by a literal zero (including `-0`)
 - a field read on a schema that does not have it
 
-It stays quiet about anything it cannot see: values from plain records, a value that depends on a branch, and runtime failures (overflow, recursion depth, an index out of range, `range` limits). A clean result means *nothing provably wrong*, which is less than *correct*.
+When a value depends on a branch, `check` keeps the possible types: it reports a mismatch only when every branch violates the expected type. It stays quiet about values from plain records and runtime failures (overflow, recursion depth, an index out of range, `range` limits). A clean result means *nothing provably wrong*, which is less than *correct*.
 
 ```nero check
 fn f(n: int) -> int {
@@ -419,4 +419,4 @@ On the programs in `examples/` that fit the subset, `eval` and `run` print the s
 - A recursion depth of 1000 in `eval`.
 - `range` is limited to 1,000,000 elements.
 - The evaluator is a tree walker, about a hundred times slower than the compiled backend.
-- Only Linux on x86-64 can use `nero run`.
+- `nero run` requires an x86-64 process. It works natively on x86-64 Linux and Intel Macs, and may work under Rosetta on Apple Silicon. The other commands do not use the compiled backend.

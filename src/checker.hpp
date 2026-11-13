@@ -24,6 +24,7 @@ struct SType {
     enum Kind { Unknown, Int, Str, Bool, List, Record, Named, Secret } kind = Unknown;
     std::string name;                // Named: the schema's name
     std::shared_ptr<SType> elem;     // List: the element type, empty when it is not known
+    std::vector<std::shared_ptr<SType>> choices; // possible types when branches differ
     // List written out as [a, b, c]: each distinct element type with the index of the first element that has it
     std::vector<std::pair<size_t, std::shared_ptr<SType>>> variants;
 };
@@ -38,15 +39,39 @@ inline SType st_list(const SType& e) {
 }
 inline bool st_known(const SType& t) { return t.kind != SType::Unknown; }
 
+inline bool st_same(const SType& a, const SType& b);
+inline void st_add_choice(SType& out, const SType& t);
+
+inline void st_add_choice(SType& out, const SType& t) {
+    const std::vector<std::shared_ptr<SType>>& choices = t.choices;
+    if (!choices.empty()) {
+        for (const auto& choice : choices) st_add_choice(out, *choice);
+        return;
+    }
+    if (!st_known(t)) return;
+    for (const auto& choice : out.choices)
+        if (st_same(*choice, t)) return;
+    out.choices.push_back(std::make_shared<SType>(t));
+}
+
 inline bool st_same(const SType& a, const SType& b) {
     if (a.kind != b.kind || a.name != b.name) return false;
     if (static_cast<bool>(a.elem) != static_cast<bool>(b.elem)) return false;
+    if (static_cast<bool>(a.choices.empty()) != static_cast<bool>(b.choices.empty())) return false;
+    if (a.choices.size() != b.choices.size()) return false;
+    for (size_t i = 0; i < a.choices.size(); i++)
+        if (!st_same(*a.choices[i], *b.choices[i])) return false;
     return !a.elem || st_same(*a.elem, *b.elem);
 }
 
 // the type both a and b fit, or Unknown when they differ
 inline SType st_join(const SType& a, const SType& b) {
-    if (!st_same(a, b)) return st(SType::Unknown);
+    if (!st_same(a, b)) {
+        SType out = st(SType::Unknown);
+        st_add_choice(out, a);
+        st_add_choice(out, b);
+        return out;
+    }
     SType out = a;
     out.variants.clear();            // two lists with the same element type may still differ element by element
     return out;
@@ -73,6 +98,7 @@ inline std::string st_str(const SType& t) {
 
 // "an int", "a Service", "a list of Port": a type in running text, like the evaluator's describe_value
 inline std::string st_phrase(const SType& t) {
+    if (!t.choices.empty()) return st_phrase(*t.choices[0]);
     switch (t.kind) {
         case SType::Named: return st_article(t.name);
         case SType::List:  return t.elem ? "a list of " + st_str(*t.elem) : "a list";
@@ -82,6 +108,7 @@ inline std::string st_phrase(const SType& t) {
 
 // the same, but a schema counts as just "a record" (what the evaluator says about assignments, conditions, operators)
 inline std::string st_kind_an(const SType& t) {
+    if (!t.choices.empty()) return st_kind_an(*t.choices[0]);
     if (t.kind == SType::Named) return "a record";
     if (t.kind == SType::List) return "a list";
     return st_article(st_str(t));
@@ -103,11 +130,30 @@ inline SType st_of(const TypeRef& r) {
 }
 
 inline bool st_holds_secret(const SType& t) {
+    if (!t.choices.empty()) {
+        for (const auto& choice : t.choices)
+            if (st_holds_secret(*choice)) return true;
+    }
     return t.kind == SType::Secret || (t.kind == SType::List && t.elem && st_holds_secret(*t.elem));
+}
+
+inline bool literal_zero(const Expr& e) {
+    if (e.kind == Expr::Num) return e.value == 0;
+    return e.kind == Expr::Unary && e.op == Tok::Minus && literal_zero(*e.lhs);
 }
 
 // "" when a value of type got fits the written type, otherwise a phrase for what was found (like the evaluator's mismatch)
 inline std::string st_mismatch(const TypeRef& want, const SType& got) {
+    if (!got.choices.empty()) {
+        bool all_mismatch = true;
+        std::string first_mismatch;
+        for (const auto& choice : got.choices) {
+            std::string mismatch = st_mismatch(want, *choice);
+            if (mismatch.empty()) all_mismatch = false;
+            else if (first_mismatch.empty()) first_mismatch = mismatch;
+        }
+        return all_mismatch ? first_mismatch : "";
+    }
     if (!st_known(got)) return "";
     switch (want.kind) {
         case Type::Int:    return got.kind == SType::Int ? "" : st_phrase(got);
@@ -537,7 +583,7 @@ private:
             return st(SType::Bool);
         }
         bool cmp = e.op == Tok::Lt || e.op == Tok::Le || e.op == Tok::Gt || e.op == Tok::Ge;
-        if ((e.op == Tok::Slash || e.op == Tok::Percent) && e.rhs->kind == Expr::Num && e.rhs->value == 0)
+        if ((e.op == Tok::Slash || e.op == Tok::Percent) && literal_zero(*e.rhs))
             error(e.line, e.col, "division by zero");
         if (e.op == Tok::Plus && st_known(l) && st_known(r) && st_k(l) == st_k(r)) {
             if (l.kind == SType::Str) return st(SType::Str);

@@ -5,7 +5,7 @@ This is a tour of the language, in the order you would want to learn it. It take
 You need the `nero` binary. Build it once:
 
 ```
-g++ -std=c++17 -O2 -Wall -Wextra -o nero src/main.cpp
+g++ -std=c++20 -O2 -Wall -Wextra -o nero src/main.cpp
 ```
 
 To try an example, save it in a file ending in `.nero` and run `./nero eval file.nero`. The `output` blocks below show what you should see. When the language is quiet about something, the [reference](reference.md) has the exact rules.

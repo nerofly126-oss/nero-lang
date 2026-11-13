@@ -1,6 +1,6 @@
 # n+ (nero-lang)
 
-A small typed config language, written from scratch in C++17. Write a service once, generate every environment from it, and catch mistakes with a line and column before anything ships.
+A small typed config language, written from scratch in C++20. Write a service once, generate every environment from it, and catch mistakes with a line and column before anything ships.
 
 It started as a JIT compiler that had no reason to exist. The compiler is still in here (`nero run`). Now there is a language on top of it that does have a reason.
 
@@ -139,18 +139,18 @@ Errors look like `error: file.nero:line:col: message`.
 ## Build and test
 
 ```
-g++ -std=c++17 -O2 -Wall -Wextra -o nero src/main.cpp
+g++ -std=c++20 -O2 -Wall -Wextra -o nero src/main.cpp
 for t in lexer parser codegen eval schema flow yaml import check diff; do
-    g++ -std=c++17 -O2 -Wall -Wextra -o ${t}_test tests/${t}_test.cpp && ./${t}_test
+    g++ -std=c++20 -O2 -Wall -Wextra -o ${t}_test tests/${t}_test.cpp && ./${t}_test
 done
 ```
 
-Ten assert-based suites, each printing `all ... tests passed`. `python3 tests/docs_test.py` runs every example in the docs. Built and tested with g++ 13.3 on Ubuntu 24.04. `nero run` generates x86-64 machine code, so it needs an x86-64 Linux machine. The evaluator, `check` and `diff` are plain C++ and do not depend on that.
+Ten assert-based suites, each printing `all ... tests passed`. `python3 tests/docs_test.py` runs every example in the docs. Built and tested with g++ 13.3 on Ubuntu 24.04. The evaluator, `check` and `diff` are plain C++ and should also build on macOS with a C++20 compiler. `nero run` generates x86-64 machine code, so it requires an x86-64 process: this works natively on Intel Macs and may work under Rosetta on Apple Silicon. GitHub Actions CI targets Ubuntu, Intel macOS and Apple Silicon macOS; it runs the machine-code tests only on x86-64. The workflow is generated from `.github/workflows/ci.nero` and CI checks that the generated YAML matches.
 
 ## Layout
 
 ```
-src/grimoire.hpp   x86-64 assembler (only used by nero run)
+src/grimoire.hpp   x86-64 assembler (only used by nero run on supported CPUs)
 src/lexer.hpp      tokens, string interpolation
 src/parser.hpp     recursive descent
 src/ast.hpp        syntax tree and types

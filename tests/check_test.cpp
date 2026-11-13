@@ -62,6 +62,18 @@ int main() {
     assert(clean("let i = 0\nwhile i < 2 {\n  if i > 0 {\n    print x\n  }\n  let x = i\n  i = i + 1\n}\n"));   // used above its let, valid on the second turn
     assert(clean(T + "fn f(n: int) -> P {\n  while true {\n    return P { n: n }\n  }\n}\nprint 1\n"));
     assert(clean("print if 1 < 2 { 1 } else { \"a\" }\n"));                 // branches of different types: nothing claimed
+    assert(says("fn f(x: bool) -> int {\n  return 1\n}\nprint f(if true { 1 } else { \"a\" })\n",
+                "argument 1 of 'f' must be a bool"));
+    assert(says("fn f(x: bool) -> int {\n  return 1\n}\nlet value = if true { 1 } else { \"a\" }\nprint f(value)\n",
+                "argument 1 of 'f' must be a bool"));
+    assert(clean("fn f(x: int) -> int {\n  return x\n}\nprint f(if true { 1 } else { \"a\" })\n"));
+    assert(clean("fn f(x: int) -> int {\n  return x\n}\nlet value = if true { 1 } else { \"a\" }\nprint f(value)\n"));
+    assert(says("fn f(x: bool) -> int {\n  return 1\n}\nlet value = if true { 1 } else { \"a\" }\nvalue = true\nprint f(value)\n",
+                "argument 1 of 'f' must be a bool"));
+    assert(says("type P {\n  n: bool\n}\nprint P { n: if true { 1 } else { \"a\" } }\n",
+                "field 'n' of P must be a bool"));
+    assert(says("fn f() -> bool {\n  return if true { 1 } else { \"a\" }\n}\nprint f()\n",
+                "this function returns bool"));
     assert(clean("print secret(\"X\")\nprint env(\"A\", \"b\")\n"));
     // a variable that gets assigned again may change what is inside it, so only its kind is trusted
     assert(clean("type S {\n  n: [str]\n}\nlet x = [1]\nx = [\"a\"]\nprint S { n: x }\n"));
@@ -116,6 +128,8 @@ int main() {
     assert(says("print 1 == \"a\"", "cannot compare an int with a str"));
     assert(says("let s = secret(\"X\")\nprint s == s", "secrets cannot be compared"));
     assert(says("print 1 / 0", "division by zero"));
+    assert(says("print 1 / -0", "division by zero"));
+    assert(says("print 1 % -(0)", "division by zero"));
     assert(says("for x in 5 {\n  print x\n}", "can only loop over a list, got an int"));
     assert(says("print [x for x in \"ab\"]", "can only loop over a list, got a str"));
     assert(says("print len(5)", "'len' needs a str or a list, got an int"));
@@ -157,6 +171,8 @@ int main() {
         "print len(5)",
         "print str([1])",
         "print 1 / 0",
+        "print 1 / -0",
+        "print 1 % -(0)",
         "for x in 5 {\n  print x\n}",
         "print 5[0]",
         "print [1][\"a\"]",

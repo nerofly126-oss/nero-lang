@@ -9,6 +9,10 @@
 #include <sstream>
 #include <vector>
 
+#if !NERO_HAS_JIT
+#include <cstdlib>
+#endif
+
 int main(int argc, char** argv) {
     if (argc >= 2 && std::string(argv[1]) == "diff")
         return diff_main(std::vector<std::string>(argv + 2, argv + argc), std::cout, std::cerr);
@@ -29,6 +33,12 @@ int main(int argc, char** argv) {
         std::cerr << "usage: nero [run|eval|check|--tokens|--ast|--bin] <file.nero> [--yaml|--json]\n";
         return 1;
     }
+#if !NERO_HAS_JIT
+    if (mode == "run" || mode == "--bin") {
+        std::cerr << "error: the compiled backend only works on x86-64 Linux or macOS; use 'nero eval' instead\n";
+        return 1;
+    }
+#endif
     if (format_given && mode != "eval") {
         std::cerr << "--yaml and --json only work with 'nero eval'\n";
         return 1;

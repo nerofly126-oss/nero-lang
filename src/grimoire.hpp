@@ -1,10 +1,21 @@
 #pragma once
-#include <sys/mman.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
+
+#if defined(__x86_64__) && (defined(__linux__) || defined(__APPLE__))
+#include <sys/mman.h>
+#define NERO_HAS_JIT 1
+#if defined(__APPLE__)
+#define NERO_MAP_ANONYMOUS MAP_ANON
+#else
+#define NERO_MAP_ANONYMOUS MAP_ANONYMOUS
+#endif
+#else
+#define NERO_HAS_JIT 0
+#endif
 
 enum Reg : uint8_t {
     RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI,
@@ -24,7 +35,11 @@ public:
     Grimoire() = default;
     Grimoire(const Grimoire&) = delete;
     Grimoire& operator=(const Grimoire&) = delete;
-    ~Grimoire() { if (mem_) munmap(mem_, mem_size_); }
+    ~Grimoire() {
+#if NERO_HAS_JIT
+        if (mem_) munmap(mem_, mem_size_);
+#endif
+    }
 
     // moves and arithmetic (all 64-bit)
     void mov(Reg dst, Reg src) { rex_w(src, dst); byte(0x89); modrm_rr(src, dst); }
@@ -64,16 +79,20 @@ void raw(std::initializer_list<int> bs) { for (int b : bs) byte(b); }
     // copy into fresh memory, flip to executable, hand back a function pointer
     template <typename Fn>
     Fn finalize() {
+#if NERO_HAS_JIT
         if (mem_) throw std::runtime_error("already finalized");
         if (code_.empty()) throw std::runtime_error("no code");
         mem_size_ = (code_.size() + 4095) & ~size_t(4095);
         mem_ = mmap(nullptr, mem_size_, PROT_READ | PROT_WRITE,
-                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                    MAP_PRIVATE | NERO_MAP_ANONYMOUS, -1, 0);
         if (mem_ == MAP_FAILED) { mem_ = nullptr; throw std::runtime_error("mmap failed"); }
         std::memcpy(mem_, code_.data(), code_.size());
         if (mprotect(mem_, mem_size_, PROT_READ | PROT_EXEC) != 0)
             throw std::runtime_error("mprotect failed");
         return reinterpret_cast<Fn>(mem_);
+#else
+        throw std::runtime_error("the compiled backend only works on x86-64 Linux or macOS");
+#endif
     }
 
 private:
