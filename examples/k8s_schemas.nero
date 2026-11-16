@@ -3,14 +3,18 @@
 type ObjectMeta {
     name: str
     labels: record = {}
+    annotations: record = {}
 }
 
 type TemplateMeta {
     labels: record = {}
+    annotations: record = {}
 }
 
 type ContainerPort {
     containerPort: int
+    name: str = "http"
+    protocol: str = "TCP"
 }
 
 type EnvVar {
@@ -21,13 +25,16 @@ type EnvVar {
 type HTTPGetAction {
     path: str
     port: int
+    scheme: str = "HTTP"
 }
 
 type Probe {
     httpGet: HTTPGetAction
+    initialDelaySeconds: int = 0
     periodSeconds: int = 10
     timeoutSeconds: int = 1
     failureThreshold: int = 3
+    successThreshold: int = 1
 }
 
 type ResourceList {
@@ -49,10 +56,17 @@ type Container {
     readinessProbe: Probe
     livenessProbe: Probe
     resources: Resources
+    command: [str] = []
+    args: [str] = []
+    workingDir: str = "/"
 }
 
 type PodSpec {
     containers: [Container]
+    serviceAccountName: str = ""
+    automountServiceAccountToken: bool = true
+    restartPolicy: str = "Always"
+    terminationGracePeriodSeconds: int = 30
 }
 
 type PodTemplate {
@@ -68,6 +82,7 @@ type DeploymentSpec {
     replicas: int
     selector: LabelSelector
     template: PodTemplate
+    strategy: record = {}
 }
 
 type Deployment {
@@ -80,12 +95,15 @@ type Deployment {
 type ServicePort {
     port: int
     targetPort: int
+    protocol: str = "TCP"
+    name: str = "http"
 }
 
 type ServiceSpec {
     selector: record
     ports: [ServicePort]
     type: str = "ClusterIP"
+    sessionAffinity: str = "None"
 }
 
 type Service {

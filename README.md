@@ -92,6 +92,7 @@ The demo builds a small local HTTP app and generates a Deployment and Service fo
 kind create cluster --name nero-demo --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
 docker build -t nero-demo-web:1.0.0 examples/k8s_app
 kind load docker-image nero-demo-web:1.0.0 --name nero-demo
+./nero check examples/k8s.nero
 ./nero eval examples/k8s.nero --yaml | kubectl --context kind-nero-demo apply --validate=strict -f -
 kubectl --context kind-nero-demo rollout status deployment/web-dev --timeout=120s
 kubectl --context kind-nero-demo port-forward service/web-dev 8080:80
@@ -222,7 +223,7 @@ examples/          small programs, the Kubernetes demo, and the bad ones on purp
 
 ## Known gaps
 
-- The Kubernetes schemas only cover the fields the demo uses.
+- The bundled Kubernetes schemas cover the demo and common core options such as metadata annotations, container commands and arguments, pod restart settings, and probe timing. They are not complete Kubernetes API schemas.
 - There is no in-place assignment into lists or records. Lists can be extended with `+` or rebuilt with comprehensions; records are built with literals.
 - Scope is flat per function. Functions can read and update top-level variables, but their local variables remain separate.
 - YAML output has no comments, anchors or block scalars. Unusual strings are double quoted.

@@ -42,6 +42,14 @@ def main():
     if json_documents(json_result.stdout) != documents:
         raise AssertionError("JSON and YAML output differ for the Kubernetes demo")
 
+    preflight = subprocess.run(
+        ["./nero", "check", "examples/k8s.nero"],
+        capture_output=True,
+        text=True,
+    )
+    if preflight.returncode != 0:
+        raise AssertionError("static check rejected the Kubernetes demo: %s" % preflight.stderr)
+
     invalid_source = subprocess.run(
         ["./nero", "eval", "examples/k8s_bad.nero", "--yaml"],
         capture_output=True,
@@ -60,12 +68,23 @@ def main():
         for document in documents:
             kubernetes_validate.validate(document, version, strict=True)
 
+    extended = deepcopy(documents[0])
+    container = extended["spec"]["template"]["spec"]["containers"][0]
+    container["command"] = ["/app/server"]
+    container["args"] = ["--port", "8080"]
+    container["workingDir"] = "/srv/app"
+    container["ports"][0]["name"] = "http"
+    extended["metadata"]["annotations"] = {"example.org/managed-by": "nero"}
+    extended["spec"]["template"]["metadata"]["annotations"] = {"example.org/revision": "1"}
+    for version in ("1.28", "1.30", "1.33"):
+        kubernetes_validate.validate(extended, version, strict=True)
+
     invalid = deepcopy(documents[0])
     invalid["spec"]["replicas"] = "3"
     try:
         kubernetes_validate.validate(invalid, "1.33", strict=True)
     except kubernetes_validate.ValidationError:
-        print("JSON and YAML match; Kubernetes schemas passed; quoted replicas was rejected")
+        print("JSON and YAML match; Kubernetes schemas passed; optional fields and quoted replicas were checked")
         return 0
     raise AssertionError("Kubernetes schema validation accepted replicas as a string")
 
