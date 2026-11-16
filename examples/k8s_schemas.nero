@@ -18,6 +18,18 @@ type EnvVar {
     value: str
 }
 
+type HTTPGetAction {
+    path: str
+    port: int
+}
+
+type Probe {
+    httpGet: HTTPGetAction
+    periodSeconds: int = 10
+    timeoutSeconds: int = 1
+    failureThreshold: int = 3
+}
+
 type ResourceList {
     cpu: str
     memory: str
@@ -31,8 +43,11 @@ type Resources {
 type Container {
     name: str
     image: str
+    imagePullPolicy: str
     ports: [ContainerPort]
     env: [EnvVar] = []
+    readinessProbe: Probe
+    livenessProbe: Probe
     resources: Resources
 }
 

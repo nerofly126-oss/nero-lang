@@ -1,5 +1,5 @@
 # run with: ./nero eval examples/k8s_bad.nero --yaml
-# the classic: a number quoted by accident. kubectl finds out late, n+ finds out now.
+# The quoted replicas value is rejected by n+ and Kubernetes.
 
 import "k8s_schemas.nero"
 
@@ -16,16 +16,22 @@ fn deployment(app: str, env: str, version: str, replicas: int) -> Deployment {
         metadata: ObjectMeta { name: "{app}-{env}", labels: labels(app, env) },
         spec: DeploymentSpec {
             replicas: "{replicas}",
-            selector: LabelSelector { matchLabels: {app: app} },
+            selector: LabelSelector { matchLabels: labels(app, env) },
             template: PodTemplate {
                 metadata: TemplateMeta { labels: labels(app, env) },
                 spec: PodSpec {
                     containers: [
                         Container {
                             name: app,
-                            image: "ghcr.io/nero/{app}:{version}",
+                            image: "nero-demo-web:{version}",
+                            imagePullPolicy: "Never",
                             ports: [ContainerPort { containerPort: 8080 }],
-                            env: [EnvVar { name: "LOG_LEVEL", value: if env == "prod" { "info" } else { "debug" } }],
+                            env: [
+                                EnvVar { name: "APP_ENV", value: env },
+                                EnvVar { name: "LOG_LEVEL", value: if env == "prod" { "info" } else { "debug" } },
+                            ],
+                            readinessProbe: Probe { httpGet: HTTPGetAction { path: "/healthz", port: 8080 } },
+                            livenessProbe: Probe { httpGet: HTTPGetAction { path: "/healthz", port: 8080 } },
                             resources: Resources {
                                 requests: ResourceList { cpu: "100m", memory: "128Mi" },
                                 limits: ResourceList { cpu: if env == "prod" { "1" } else { "500m" }, memory: "256Mi" },

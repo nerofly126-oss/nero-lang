@@ -84,17 +84,32 @@ $ ./nero diff examples/k8s.nero --by metadata.name web-staging web-prod
 
 Lists of records that all have a unique `name` (containers, env vars) are matched by name, so reordering them is not a change. `--ignore PATH` hides a field and everything under it. You can also diff two files: `nero diff a.nero b.nero`. The exit code is 0 for identical, 1 for different and 2 for trouble, so it works in CI.
 
-## Check Kubernetes output against an API server
+## Run the Kubernetes demo
 
-The demo emits six resources. With Docker, [kind](https://kind.sigs.k8s.io/) and `kubectl` installed, start a disposable local cluster and ask its API server to validate them without creating the resources:
+The demo builds a small local HTTP app and generates a Deployment and Service for dev, staging and prod. With Docker, [kind](https://kind.sigs.k8s.io/) and `kubectl` installed, run this in one terminal:
 
 ```
 kind create cluster --name nero-demo --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
-./nero eval examples/k8s.nero --yaml | kubectl --context kind-nero-demo apply --dry-run=server --validate=strict -f -
+docker build -t nero-demo-web:1.0.0 examples/k8s_app
+kind load docker-image nero-demo-web:1.0.0 --name nero-demo
+./nero eval examples/k8s.nero --yaml | kubectl --context kind-nero-demo apply --validate=strict -f -
+kubectl --context kind-nero-demo rollout status deployment/web-dev --timeout=120s
+kubectl --context kind-nero-demo port-forward service/web-dev 8080:80
+```
+
+In a second terminal, request the dev Service:
+
+```
+curl http://127.0.0.1:8080/
+```
+
+It returns JSON with `"environment":"dev"` and `"log_level":"debug"`. Stop port-forwarding with Ctrl-C, then remove the local cluster:
+
+```
 kind delete cluster --name nero-demo
 ```
 
-The same server-side dry-run runs in CI against a pinned kind cluster. It checks the manifests with Kubernetes itself; it does not create workloads.
+CI runs this same build, deploy, readiness and HTTP check in a disposable kind cluster. It also checks server-side dry-run validation and confirms Kubernetes rejects a string value for `replicas`.
 
 ## A quick tour
 
