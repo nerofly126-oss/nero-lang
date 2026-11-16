@@ -58,7 +58,6 @@ type Container {
     resources: Resources
     command: [str] = []
     args: [str] = []
-    workingDir: str = "/"
 }
 
 type PodSpec {

@@ -72,7 +72,6 @@ def main():
     container = extended["spec"]["template"]["spec"]["containers"][0]
     container["command"] = ["/app/server"]
     container["args"] = ["--port", "8080"]
-    container["workingDir"] = "/srv/app"
     container["ports"][0]["name"] = "http"
     extended["metadata"]["annotations"] = {"example.org/managed-by": "nero"}
     extended["spec"]["template"]["metadata"]["annotations"] = {"example.org/revision": "1"}
