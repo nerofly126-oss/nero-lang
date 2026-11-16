@@ -113,14 +113,15 @@ CI runs this same local-image build, deploy, readiness and HTTP check in a dispo
 
 ### Use an image from a registry
 
-To deploy outside Kind, tag and push the app image to a registry your cluster can access. For GitHub Container Registry, replace `OWNER` with your GitHub username or organization. Create a GitHub personal access token (classic) with `write:packages`, then authenticate Docker without putting the token in shell history:
+To deploy outside Kind, tag and push the app image to a registry your cluster can access. For GitHub Container Registry, replace `OWNER` with your GitHub username or organization. Create a GitHub personal access token (classic) with `write:packages`, then let Docker prompt for it so it stays out of shell history and command arguments:
 
 ```
-export CR_PAT=YOUR_TOKEN
-echo "$CR_PAT" | docker login ghcr.io -u OWNER --password-stdin
+docker login ghcr.io -u OWNER
 docker build -t ghcr.io/OWNER/nero-demo-web:1.0.0 examples/k8s_app
 docker push ghcr.io/OWNER/nero-demo-web:1.0.0
+./nero check examples/k8s.nero
 K8S_IMAGE=ghcr.io/OWNER/nero-demo-web:1.0.0 K8S_IMAGE_PULL_POLICY=IfNotPresent ./nero eval examples/k8s.nero --yaml > /tmp/nero-k8s.yaml
+kubectl apply --dry-run=server --validate=strict -f /tmp/nero-k8s.yaml
 kubectl apply --validate=strict -f /tmp/nero-k8s.yaml
 ```
 

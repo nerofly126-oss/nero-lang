@@ -32,7 +32,9 @@ jobs:
         run: kind create cluster --name nero-ci --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5 --wait 3m
 
       - name: Validate manifests with Kubernetes API server
-        run: ./nero eval examples/k8s.nero --yaml | kubectl --context kind-nero-ci apply --dry-run=server --validate=strict -f -
+        run: |
+          ./nero check examples/k8s.nero
+          ./nero eval examples/k8s.nero --yaml | kubectl --context kind-nero-ci apply --dry-run=server --validate=strict -f -
 
       - name: Confirm Kubernetes rejects an invalid manifest
         run: |
@@ -67,6 +69,7 @@ jobs:
 
       - name: Deploy demo and verify HTTP response
         run: |
+          ./nero check examples/k8s.nero
           ./nero eval examples/k8s.nero --yaml | kubectl --context kind-nero-ci apply --validate=strict -f -
           kubectl --context kind-nero-ci rollout status deployment/web-dev --timeout=120s
           kubectl --context kind-nero-ci port-forward service/web-dev 18080:80 > /tmp/nero-port-forward.log 2>&1 &
