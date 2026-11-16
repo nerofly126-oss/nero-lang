@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x86_64
+          - os: macos-15-intel
+            target: macos-x86_64
+          - os: macos-15
+            target: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build nero
+        run: c++ -std=c++20 -O2 -Wall -Wextra -o nero src/main.cpp
+
+      - name: Check release build
+        run: |
+          ./nero check examples/k8s.nero
+          ./nero eval examples/k8s.nero --yaml > /tmp/k8s.yaml
+
+      - name: Package release
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          package=nero-${GITHUB_REF_NAME}-${TARGET}
+          mkdir -p "dist/${package}/docs"
+          cp nero README.md LICENSE "dist/${package}/"
+          cp docs/tutorial.md docs/reference.md "dist/${package}/docs/"
+          tar -czf "${package}.tar.gz" -C dist "${package}"
+          shasum -a 256 "${package}.tar.gz" > "${package}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: nero-*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+              gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --repo "$GITHUB_REPOSITORY"
+          fi

@@ -2,6 +2,8 @@
 
 A small typed config language, written from scratch in C++20. Write a service once, generate every environment from it, and catch mistakes with a line and column before anything ships.
 
+Licensed under the MIT License. See [LICENSE](LICENSE).
+
 It started as a JIT compiler that had no reason to exist. The compiler is still in here (`nero run`). Now there is a language on top of it that does have a reason.
 
 ## Honest first
@@ -145,7 +147,11 @@ for t in lexer parser codegen eval schema flow yaml import check diff; do
 done
 ```
 
-Ten assert-based suites, each printing `all ... tests passed`. `python3 tests/docs_test.py` runs every example in the docs. Built and tested with g++ 13.3 on Ubuntu 24.04. The evaluator, `check` and `diff` are plain C++ and should also build on macOS with a C++20 compiler. `nero run` generates x86-64 machine code, so it requires an x86-64 process: this works natively on Intel Macs and may work under Rosetta on Apple Silicon. GitHub Actions CI targets Ubuntu, Intel macOS and Apple Silicon macOS; it runs the machine-code tests only on x86-64. The workflow is generated from `.github/workflows/ci.nero` and CI checks that the generated YAML matches.
+Ten assert-based suites, each printing `all ... tests passed`. `python3 tests/docs_test.py` runs every example in the docs. Built and tested with g++ 13.3 on Ubuntu 24.04. The evaluator, `check` and `diff` are plain C++ and should also build on macOS with a C++20 compiler. `nero run` generates x86-64 machine code, so it requires an x86-64 process: this works natively on Intel Macs and may work under Rosetta on Apple Silicon. GitHub Actions CI targets Ubuntu, Intel macOS and Apple Silicon macOS; it runs the machine-code tests only on x86-64. The CI and release workflows are generated from their matching `.nero` files, and CI checks that both generated YAML files match.
+
+## Releases
+
+Push a version tag such as `v0.1.0` to publish a GitHub release with binaries for Linux x86-64, Intel macOS and Apple Silicon. Each `.tar.gz` includes the `nero` executable, this README, the license and the tutorial and reference, with a matching SHA-256 checksum file. `nero run` still requires an x86-64 process; all release builds support `eval`, `check` and `diff`.
 
 ## Layout
 
