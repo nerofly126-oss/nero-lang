@@ -109,7 +109,22 @@ It returns JSON with `"environment":"dev"` and `"log_level":"debug"`. Stop port-
 kind delete cluster --name nero-demo
 ```
 
-CI runs this same build, deploy, readiness and HTTP check in a disposable kind cluster. It also checks server-side dry-run validation and confirms Kubernetes rejects a string value for `replicas`.
+CI runs this same local-image build, deploy, readiness and HTTP check in a disposable kind cluster. It also checks server-side dry-run validation and confirms Kubernetes rejects a string value for `replicas`.
+
+### Use an image from a registry
+
+To deploy outside Kind, tag and push the app image to a registry your cluster can access. For GitHub Container Registry, replace `OWNER` with your GitHub username or organization. Create a GitHub personal access token (classic) with `write:packages`, then authenticate Docker without putting the token in shell history:
+
+```
+export CR_PAT=YOUR_TOKEN
+echo "$CR_PAT" | docker login ghcr.io -u OWNER --password-stdin
+docker build -t ghcr.io/OWNER/nero-demo-web:1.0.0 examples/k8s_app
+docker push ghcr.io/OWNER/nero-demo-web:1.0.0
+K8S_IMAGE=ghcr.io/OWNER/nero-demo-web:1.0.0 K8S_IMAGE_PULL_POLICY=IfNotPresent ./nero eval examples/k8s.nero --yaml > /tmp/nero-k8s.yaml
+kubectl apply --validate=strict -f /tmp/nero-k8s.yaml
+```
+
+For a private registry, configure an image pull secret in the target namespace and add `imagePullSecrets` to the Pod spec before deploying. Keep registry credentials out of the `.nero` file and generated manifests.
 
 ## A quick tour
 
@@ -201,7 +216,7 @@ examples/          small programs, the Kubernetes demo, and the bad ones on purp
 
 - The YAML output parses back (PyYAML) to the same data as the JSON output for every evaluating example, plus a file of 68 awkward strings and keys.
 - CI uses `kubernetes-validate` 1.37.0 to validate the six generated manifests (three Deployments, three Services) against Kubernetes 1.28, 1.30 and 1.33 schemas in strict mode. It also checks that schema validation rejects `replicas: "3"`.
-- CI also sends the generated documents to a disposable Kubernetes API server with `kubectl apply --dry-run=server --validate=strict`. This validates server-side without persisting resources.
+- CI sends the generated documents to a disposable Kubernetes API server with `kubectl apply --dry-run=server --validate=strict`, then applies them and verifies the dev deployment responds over HTTP.
 - `check` was run over every program in the test suites that evaluates successfully. It stayed quiet on all of them except three that divide by a literal zero inside a branch that never runs.
 
 ## Known gaps
