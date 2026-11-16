@@ -234,7 +234,28 @@ print greet(5)
 error: example.nero:5:13: argument 1 of 'greet' must be a str, got an int
 ```
 
-A function only sees its own parameters and variables. It cannot read variables from the main program, so everything it needs has to be passed in. That is less convenient than it sounds and much easier to reason about than it sounds.
+Functions can also use variables declared at the top level. Those globals are shared, so a function can update one and later calls will see the new value. Parameters and `let` variables inside a function stay local.
+
+```nero
+let limit = 6
+
+fn capped(n: int) -> int {
+    return if n > limit { limit } else { n }
+}
+
+fn set_limit(n: int) {
+    limit = n
+}
+
+print capped(9)
+set_limit(3)
+print capped(9)
+```
+
+```output
+6
+3
+```
 
 A function can call itself:
 

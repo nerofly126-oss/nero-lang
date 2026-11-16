@@ -136,7 +136,7 @@ zero is false
 
 ### Variables and scope
 
-Scope is flat per function, and the main program is like a function. There are no global variables, and a function cannot see the variables of the main program. A function sees its parameters and what it declares itself.
+The main program's top-level variables are globals: functions can read and update them. A function's parameters and variables stay local to that function, and a local name can shadow a global. Scope inside a function is flat.
 
 A variable made with `let` inside a block stays visible after the block, if the block ran. A loop variable exists only inside its loop, and it cannot reuse a name that is already taken.
 
@@ -380,10 +380,11 @@ There is no YAML comment, anchor or block-scalar output.
 - calls to undefined functions, wrong argument counts and argument types
 - return values of the wrong type, and a function returning a schema or a secret that can end without a `return`
 - variables that are never declared, assignments of a different kind, a second `let` of one name
-- operators and conditions applied to the wrong kinds, builtins given the wrong kind, a division by a literal zero (including `-0`)
+- operators and conditions applied to the wrong kinds, builtins given the wrong kind, constant integer overflow and division by zero
+- out-of-range indexes into literal lists when the index is a constant expression
 - a field read on a schema that does not have it
 
-When a value depends on a branch, `check` keeps the possible types: it reports a mismatch only when every branch violates the expected type. It stays quiet about values from plain records and runtime failures (overflow, recursion depth, an index out of range, `range` limits). A clean result means *nothing provably wrong*, which is less than *correct*.
+When a value depends on a branch, `check` keeps the possible types: it reports a mismatch only when every branch violates the expected type. It stays quiet about values from plain records and runtime failures it cannot determine (for example recursion depth, a variable list index, or `range` limits). A clean result means *nothing provably wrong*, which is less than *correct*.
 
 ```nero check
 fn f(n: int) -> int {

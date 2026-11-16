@@ -217,15 +217,15 @@ examples/          small programs, the Kubernetes demo, and the bad ones on purp
 - The YAML output parses back (PyYAML) to the same data as the JSON output for every evaluating example, plus a file of 68 awkward strings and keys.
 - CI uses `kubernetes-validate` 1.37.0 to validate the six generated manifests (three Deployments, three Services) against Kubernetes 1.28, 1.30 and 1.33 schemas in strict mode. It also checks that schema validation rejects `replicas: "3"`.
 - CI sends the generated documents to a disposable Kubernetes API server with `kubectl apply --dry-run=server --validate=strict`, then applies them and verifies the dev deployment responds over HTTP.
-- `check` was run over every program in the test suites that evaluates successfully. It stayed quiet on all of them except three that divide by a literal zero inside a branch that never runs.
+- `check` examines uncalled functions and unreachable branches too. It reports statically provable errors such as constant overflow or division by zero even when that branch would not run.
 
 ## Known gaps
 
 - The Kubernetes schemas only cover the fields the demo uses.
-- No mutation (no push, no assigning into lists or records). Build new ones with `+` and comprehensions.
-- Scope is flat per function: no globals, and functions cannot see the main program's variables.
+- There is no in-place assignment into lists or records. Lists can be extended with `+` or rebuilt with comprehensions; records are built with literals.
+- Scope is flat per function. Functions can read and update top-level variables, but their local variables remain separate.
 - YAML output has no comments, anchors or block scalars. Unusual strings are double quoted.
-- `check` cannot see runtime-only problems: integer overflow, recursion depth, an index out of range.
+- `check` catches constant integer overflow, division by zero, and out-of-range indexes in literal lists. It cannot prove runtime-dependent overflow, recursion depth, or indexes safe.
 - `diff` matches unnamed lists by position, so inserting at the front reports a cascade. `--by` pairs documents in the order they were emitted.
 - The evaluator is a tree walker, roughly two orders of magnitude slower than the compiled backend on a recursive `fib`. That is fine for config and not fine for anything else.
 

@@ -303,6 +303,7 @@ public:
                 if (fd.def) default_of(fd);
         cur_file_ = &prog_.file;
         Frame top;
+        top.globals = &top;
         exec_stmts(prog_.stmts, top);
     }
 
@@ -310,6 +311,7 @@ private:
     struct Frame {
         std::unordered_map<std::string, Value> vars;
         std::unordered_map<std::string, const Stmt*> decl;   // which 'let' declared a name (null for parameters)
+        Frame* globals = nullptr;
         const Func* func = nullptr;
         bool returned = false;
         Value ret;
@@ -373,11 +375,17 @@ private:
             }
             case Stmt::Assign: {
                 Value v = eval(*s.expr, f);
+                Value* target = nullptr;
                 auto it = f.vars.find(s.name);
-                if (it == f.vars.end()) fail(s.line, s.col, "undefined variable '" + s.name + "'");
-                if (it->second.kind != v.kind)
-                    fail(s.line, s.col, "'" + s.name + "' is " + kind_an(it->second.kind) + ", cannot assign " + kind_an(v.kind));
-                it->second = std::move(v);
+                if (it != f.vars.end()) target = &it->second;
+                else if (f.globals) {
+                    auto global = f.globals->vars.find(s.name);
+                    if (global != f.globals->vars.end()) target = &global->second;
+                }
+                if (!target) fail(s.line, s.col, "undefined variable '" + s.name + "'");
+                if (target->kind != v.kind)
+                    fail(s.line, s.col, "'" + s.name + "' is " + kind_an(target->kind) + ", cannot assign " + kind_an(v.kind));
+                *target = std::move(v);
                 break;
             }
             case Stmt::Print:
@@ -445,8 +453,12 @@ private:
             case Expr::Bool: return Value::boolean(e.value != 0);
             case Expr::Var: {
                 auto it = f.vars.find(e.name);
-                if (it == f.vars.end()) fail(e.line, e.col, "undefined variable '" + e.name + "'");
-                return it->second;
+                if (it != f.vars.end()) return it->second;
+                if (f.globals) {
+                    auto global = f.globals->vars.find(e.name);
+                    if (global != f.globals->vars.end()) return global->second;
+                }
+                fail(e.line, e.col, "undefined variable '" + e.name + "'");
             }
             case Expr::Unary: {
                 Value v = eval(*e.lhs, f);
@@ -771,6 +783,7 @@ private:
 
         Frame callee;
         callee.func = &fn;
+        callee.globals = f.globals;
         for (size_t i = 0; i < n; i++) {
             const Expr& a = *e.args[i];
             Value v = eval(a, f);

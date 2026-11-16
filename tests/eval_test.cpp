@@ -77,6 +77,9 @@ int main() {
     // functions
     assert(ev("fn fib(n) {\n  if n < 2 { return n }\n  return fib(n - 1) + fib(n - 2)\n}\nprint fib(20)") == "6765\n");
     assert(ev("print later(2)\nfn later(x) { return x * 2 }") == "4\n");
+    assert(ev("let limit = 3\nfn capped(n: int) -> int { return if n > limit { limit } else { n } }\nprint capped(8)") == "3\n");
+    assert(ev("let count = 1\nfn increment() -> int { count = count + 1\n return count }\nprint increment()\nprint count") == "2\n2\n");
+    assert(ev("let value = 4\nfn local() -> int { let value = 9\n return value }\nprint local()\nprint value") == "9\n4\n");
     assert(ev("fn f() { }\nprint f()") == "0\n");
     assert(ev("fn g() -> str { }\nprint g()") == "\n");
     assert(ev("fn r() -> record { }\nemit r()") == "{}\n");
@@ -125,7 +128,7 @@ int main() {
     assert(has("fn len(x) { }", "builtin"));
     assert(has("fn f() { }\nfn f() { }", "already defined"));
     assert(has("fn f(a, a) { }", "duplicate parameter"));
-    assert(has("let x = 1\nfn f() { return x }\nprint f()", "undefined variable 'x'"));   // no globals
+    assert(has("let x = 1\nfn f() { return y }\nprint f()", "undefined variable 'y'"));
     assert(has("fn f(n) { return f(n + 1) }\nprint f(0)", "recursion too deep"));
     assert(has("emit {a: 1 / 0}", "division by zero"));
 

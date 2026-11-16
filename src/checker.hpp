@@ -137,11 +137,6 @@ inline bool st_holds_secret(const SType& t) {
     return t.kind == SType::Secret || (t.kind == SType::List && t.elem && st_holds_secret(*t.elem));
 }
 
-inline bool literal_zero(const Expr& e) {
-    if (e.kind == Expr::Num) return e.value == 0;
-    return e.kind == Expr::Unary && e.op == Tok::Minus && literal_zero(*e.lhs);
-}
-
 // "" when a value of type got fits the written type, otherwise a phrase for what was found (like the evaluator's mismatch)
 inline std::string st_mismatch(const TypeRef& want, const SType& got) {
     if (!got.choices.empty()) {
@@ -200,12 +195,11 @@ public:
         for (const TypeDecl& d : prog.types)
             for (const FieldDecl& fd : d.fields)
                 if (fd.def) check_default(fd);
-        for (const Func& f : prog.funcs) check_func(f);
-
         file_ = prog.file;
         Scope top;
         collect_lets(prog.stmts, top);
         stmts(prog.stmts, top);
+        for (const Func& f : prog.funcs) check_func(f, top.vars);
 
         std::stable_sort(diags_.begin(), diags_.end(), [](const Diagnostic& a, const Diagnostic& b) {
             if (a.file != b.file) return a.file < b.file;
@@ -216,8 +210,15 @@ public:
     }
 
 private:
+    struct IntFold {
+        enum State { Unknown, Value, Overflow, DivisionByZero } state = Unknown;
+        int64_t value = 0;
+        const Expr* fault = nullptr;
+    };
+
     struct Scope {
         std::map<std::string, SType> vars;      // what we know about each variable, in the order the code is written
+        std::map<std::string, SType> globals;   // top-level variables visible from functions
         std::set<std::string> declared;         // every name a 'let' or a parameter declares anywhere in the function
         std::set<std::string> params;
         std::set<std::string> reassigned;       // names that an assignment (x = ...) changes somewhere
@@ -233,6 +234,58 @@ private:
 
     static bool is_builtin(const std::string& n) {
         return n == "len" || n == "str" || n == "range" || n == "env" || n == "secret";
+    }
+
+    static IntFold fold_int(const Expr& e) {
+        if (e.kind == Expr::Num) return {IntFold::Value, e.value, &e};
+        if (e.kind == Expr::Unary && e.op == Tok::Minus) {
+            IntFold value = fold_int(*e.lhs);
+            if (value.state != IntFold::Value) return value;
+            if (value.value == INT64_MIN) return {IntFold::Overflow, 0, &e};
+            return {IntFold::Value, -value.value, &e};
+        }
+        if (e.kind != Expr::Binary || (e.op != Tok::Plus && e.op != Tok::Minus && e.op != Tok::Star &&
+                                       e.op != Tok::Slash && e.op != Tok::Percent))
+            return {};
+
+        IntFold left = fold_int(*e.lhs);
+        if (left.state != IntFold::Value) return left;
+        IntFold right = fold_int(*e.rhs);
+        if (right.state != IntFold::Value) return right;
+        int64_t result = 0;
+        switch (e.op) {
+            case Tok::Plus:
+                if (__builtin_add_overflow(left.value, right.value, &result))
+                    return {IntFold::Overflow, 0, &e};
+                break;
+            case Tok::Minus:
+                if (__builtin_sub_overflow(left.value, right.value, &result))
+                    return {IntFold::Overflow, 0, &e};
+                break;
+            case Tok::Star:
+                if (__builtin_mul_overflow(left.value, right.value, &result))
+                    return {IntFold::Overflow, 0, &e};
+                break;
+            case Tok::Slash:
+            case Tok::Percent:
+                if (right.value == 0) return {IntFold::DivisionByZero, 0, &e};
+                if (right.value == -1 && left.value == INT64_MIN) {
+                    if (e.op == Tok::Slash) return {IntFold::Overflow, 0, &e};
+                    result = 0;
+                } else {
+                    result = e.op == Tok::Slash ? left.value / right.value : left.value % right.value;
+                }
+                break;
+            default: return {};
+        }
+        return {IntFold::Value, result, &e};
+    }
+
+    void check_int_fold(const Expr& e) {
+        IntFold folded = fold_int(e);
+        if (folded.fault != &e) return;
+        if (folded.state == IntFold::Overflow) error(e.line, e.col, "integer overflow");
+        else if (folded.state == IntFold::DivisionByZero) error(e.line, e.col, "division by zero");
     }
 
     void error(int line, int col, const std::string& msg) { diags_.push_back({file_, line, col, msg}); }
@@ -285,10 +338,11 @@ private:
                                                  st_phrase(st_of(fd.type)) + ", got " + m);
     }
 
-    void check_func(const Func& f) {
+    void check_func(const Func& f, const std::map<std::string, SType>& globals) {
         file_ = f.file;
         Scope sc;
         sc.func = &f;
+        sc.globals = globals;
         for (size_t i = 0; i < f.params.size(); i++) {
             if (sc.params.count(f.params[i])) error(f.line, f.col, "duplicate parameter '" + f.params[i] + "'");
             sc.params.insert(f.params[i]);
@@ -340,7 +394,14 @@ private:
                 SType t = expr(*s.expr, sc);
                 auto it = sc.vars.find(s.name);
                 if (it == sc.vars.end()) {
-                    if (!sc.declared.count(s.name)) error(s.line, s.col, "undefined variable '" + s.name + "'");
+                    auto global = sc.globals.find(s.name);
+                    if (global != sc.globals.end()) {
+                        if (st_known(global->second) && st_known(t) && st_k(global->second) != st_k(t))
+                            error(s.line, s.col, "'" + s.name + "' is " + st_kind_an(global->second) +
+                                                   ", cannot assign " + st_kind_an(t));
+                    } else if (!sc.declared.count(s.name)) {
+                        error(s.line, s.col, "undefined variable '" + s.name + "'");
+                    }
                 } else if (st_known(it->second) && st_known(t) && st_k(it->second) != st_k(t)) {
                     error(s.line, s.col, "'" + s.name + "' is " + st_kind_an(it->second) + ", cannot assign " + st_kind_an(t));
                 }
@@ -410,6 +471,8 @@ private:
     SType var_type(const Expr& e, Scope& sc) {
         auto it = sc.vars.find(e.name);
         if (it != sc.vars.end()) return it->second;
+        auto global = sc.globals.find(e.name);
+        if (global != sc.globals.end()) return global->second;
         if (!sc.declared.count(e.name)) error(e.line, e.col, "undefined variable '" + e.name + "'");
         return st(SType::Unknown);
     }
@@ -422,6 +485,7 @@ private:
             case Expr::Var:  return var_type(e, sc);
             case Expr::Unary: {
                 SType t = expr(*e.lhs, sc);
+                if (e.op == Tok::Minus) check_int_fold(e);
                 if (e.op == Tok::Not) {
                     if (st_known(t) && t.kind != SType::Bool)
                         error(e.lhs->line, e.lhs->col, "the operand of 'not' must be a bool, got " + st_kind_an(t));
@@ -491,6 +555,14 @@ private:
                 if (base.kind == SType::List) {
                     if (st_known(idx) && idx.kind != SType::Int)
                         error(e.rhs->line, e.rhs->col, "a list index must be an int, got " + st_kind_an(idx));
+                    if (e.lhs->kind == Expr::List) {
+                        IntFold constant = fold_int(*e.rhs);
+                        if (constant.state == IntFold::Value &&
+                            (constant.value < 0 || static_cast<uint64_t>(constant.value) >= e.lhs->args.size()))
+                            error(e.line, e.col, "index " + std::to_string(constant.value) +
+                                                   " is out of range for a list of length " +
+                                                   std::to_string(e.lhs->args.size()));
+                    }
                     return base.elem ? *base.elem : st(SType::Unknown);
                 }
                 if (base.kind == SType::Record || base.kind == SType::Named) {
@@ -583,8 +655,7 @@ private:
             return st(SType::Bool);
         }
         bool cmp = e.op == Tok::Lt || e.op == Tok::Le || e.op == Tok::Gt || e.op == Tok::Ge;
-        if ((e.op == Tok::Slash || e.op == Tok::Percent) && literal_zero(*e.rhs))
-            error(e.line, e.col, "division by zero");
+        check_int_fold(e);
         if (e.op == Tok::Plus && st_known(l) && st_known(r) && st_k(l) == st_k(r)) {
             if (l.kind == SType::Str) return st(SType::Str);
             if (l.kind == SType::List) return st_list(l.elem && r.elem ? st_join(*l.elem, *r.elem) : st(SType::Unknown));

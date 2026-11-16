@@ -55,6 +55,7 @@ int main() {
     assert(clean(T + "fn mk(n: int) -> P {\n  return P { n: n, name: \"{n}\" }\n}\nemit mk(1)\n"));
     assert(clean("let xs = [1, 2, 3]\nlet ys = [x * 2 for x in xs if x > 1]\nprint len(ys)\n"));
     assert(clean("fn f(a: str, b: [int]) -> record {\n  return {a: a, b: b}\n}\nprint f(\"x\", [1]).a\n"));
+    assert(clean("let limit = 5\nfn capped(n: int) -> int {\n  return if n > limit { limit } else { n }\n}\nprint capped(8)\n"));
     assert(clean("print {a: 1}.whatever\n"));                              // a plain record: nothing is known, so nothing is claimed
     assert(clean("fn f(x: int) -> int {\n  return x\n}\nprint 1 + f(2)\nprint \"a\" + \"b\"\nprint [1] + [2]\n"));
     assert(clean("let a = 1\nif true {\n  let b = 1\n} else {\n  let b = 2\n}\n"));         // the same name in two branches is fine
@@ -97,6 +98,7 @@ int main() {
     assert(says("print nope(1)", "undefined function 'nope'"));
     assert(says("fn f(a: int) -> int {\n  return a\n}\nprint f(1, 2)", "function 'f' takes 1 argument(s), got 2"));
     assert(says("fn f(a: int) -> int {\n  return a\n}\nprint f(\"x\")", "argument 1 of 'f' must be an int, got a str"));
+    assert(says("let count = 1\nfn f() {\n  count = \"bad\"\n}\n", "'count' is an int, cannot assign a str"));
     assert(says("fn f(a) -> int {\n  return a\n}\nprint f(\"x\")", "parameter 'a' has no type written, so it is an int"));
     assert(says("fn f() -> int {\n  return \"x\"\n}", "this function returns int, but the value is a str"));
     assert(says("fn f() {\n  return \"x\"\n}", "no return type is written, so it is an int"));
@@ -130,6 +132,9 @@ int main() {
     assert(says("print 1 / 0", "division by zero"));
     assert(says("print 1 / -0", "division by zero"));
     assert(says("print 1 % -(0)", "division by zero"));
+    assert(says("print 1 / (3 - 3)", "division by zero"));
+    assert(says("print 9223372036854775807 + 1", "integer overflow"));
+    assert(says("print [1, 2][1 + 1]", "index 2 is out of range for a list of length 2"));
     assert(says("for x in 5 {\n  print x\n}", "can only loop over a list, got an int"));
     assert(says("print [x for x in \"ab\"]", "can only loop over a list, got a str"));
     assert(says("print len(5)", "'len' needs a str or a list, got an int"));
