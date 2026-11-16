@@ -405,7 +405,7 @@ Evaluates the files and compares the documents they `emit`:
 - `nero diff file.nero --by PATH X Y` takes the documents of one file whose field `PATH` (a dotted path such as `metadata.name`) equals `X` and the ones where it equals `Y`, and pairs those. The `--by` field itself is not reported.
 - `--ignore PATH` hides a field and everything below it. It can be repeated.
 
-One line per change: `~ path: before -> after`, `+ path: value`, `- path: value`. A list whose items are all records with a unique string `name` is compared by that name, other lists by position. `print` output is not part of a diff. The exit code is 0 for identical, 1 for different, 2 for an error.
+One line per change: `~ path: before -> after`, `+ path: value`, `- path: value`. A list whose items are all records with a unique string `name` is compared by that name. Other lists up to 256 items per side align unchanged items and compare unmatched items in order; larger lists are compared by position. `print` output is not part of a diff. The exit code is 0 for identical, 1 for different, 2 for an error.
 
 ## The compiled backend
 

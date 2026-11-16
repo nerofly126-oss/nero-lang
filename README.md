@@ -228,7 +228,7 @@ examples/          small programs, the Kubernetes demo, and the bad ones on purp
 - Scope is flat per function. Functions can read and update top-level variables, but their local variables remain separate.
 - YAML output has no comments, anchors or block scalars. Unusual strings are double quoted.
 - `check` catches constant integer overflow, division by zero, and out-of-range indexes in literal lists. It cannot prove runtime-dependent overflow, recursion depth, or indexes safe.
-- `diff` matches unnamed lists by position, so inserting at the front reports a cascade. `--by` pairs documents in the order they were emitted.
+- `diff` aligns unchanged items in unnamed lists up to 256 items per side, then compares remaining items in order; larger lists use positional comparison. `--by` pairs documents in the order they were emitted.
 - The evaluator is a tree walker, roughly two orders of magnitude slower than the compiled backend on a recursive `fib`. That is fine for config and not fine for anything else.
 
 ## Why the compiler is still here

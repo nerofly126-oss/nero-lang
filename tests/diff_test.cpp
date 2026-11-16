@@ -60,10 +60,13 @@ int main() {
     assert(d("emit {l: {\"app.io/name\": \"a\"}}", "emit {l: {\"app.io/name\": \"b\"}}") == "~ l[\"app.io/name\"]: \"a\" -> \"b\"\n");
     assert(d("emit {a: {b: 1}}", "emit {a: 5}") == "~ a: {\"b\": 1} -> 5\n");
 
-    // ---- lists: by position, unless every item has its own name ----
+    // ---- named lists match by name; other lists align unchanged items ----
     assert(d("emit {l: [1, 2]}", "emit {l: [1, 3, 4]}") == "~ l[1]: 2 -> 3\n+ l[2]: 4\n");
     assert(d("emit {l: [1, 2, 3]}", "emit {l: [1]}") == "- l[1]: 2\n- l[2]: 3\n");
     assert(d("emit [1, 2]", "emit [1, 9]") == "~ [1]: 2 -> 9\n");
+    assert(d("emit {l: [1, 2, 3]}", "emit {l: [0, 1, 2, 3]}") == "+ l[0]: 0\n");
+    assert(d("emit {l: [1, 2, 3, 4]}", "emit {l: [1, 3, 4]}") == "- l[1]: 2\n");
+    assert(d("emit {l: [{v: 1}, {v: 2}]}", "emit {l: [{v: 0}, {v: 1}, {v: 2}]}") == "+ l[0]: {\"v\": 0}\n");
     std::string cs = "emit {c: [{name: \"web\", image: \"a\"}, {name: \"log\", image: \"b\"}]}";
     std::string cs_reordered = "emit {c: [{name: \"log\", image: \"b\"}, {name: \"web\", image: \"a\"}]}";
     assert(d(cs, cs_reordered) == "");                                                      // reordering named items is not a change

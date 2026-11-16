@@ -63,6 +63,22 @@ inline bool diff_same_scalar(const Value& a, const Value& b) {
     return a.s == b.s;     // Str, and the name of a Secret
 }
 
+inline bool diff_equal(const Value& a, const Value& b) {
+    if (a.kind != b.kind) return false;
+    if (a.kind != Value::List && a.kind != Value::Record) return diff_same_scalar(a, b);
+    if (a.items.size() != b.items.size()) return false;
+    if (a.kind == Value::List) {
+        for (size_t k = 0; k < a.items.size(); k++)
+            if (!diff_equal(a.items[k], b.items[k])) return false;
+        return true;
+    }
+    for (size_t k = 0; k < a.keys.size(); k++) {
+        const Value* other = diff_field(b, a.keys[k]);
+        if (!other || !diff_equal(a.items[k], *other)) return false;
+    }
+    return true;
+}
+
 inline void diff_into(const Value& a, const Value& b, const std::string& path, std::vector<Change>& out) {
     if (a.kind == Value::Record && b.kind == Value::Record) {
         for (size_t k = 0; k < a.keys.size(); k++) {
@@ -93,12 +109,61 @@ inline void diff_into(const Value& a, const Value& b, const std::string& path, s
             }
             return;
         }
-        size_t common = std::min(a.items.size(), b.items.size());
-        for (size_t k = 0; k < common; k++) diff_into(a.items[k], b.items[k], path + "[" + std::to_string(k) + "]", out);
-        for (size_t k = common; k < a.items.size(); k++)
-            out.push_back({'-', path + "[" + std::to_string(k) + "]", diff_show(a.items[k]), ""});
-        for (size_t k = common; k < b.items.size(); k++)
-            out.push_back({'+', path + "[" + std::to_string(k) + "]", "", diff_show(b.items[k])});
+        if (a.items.size() <= 256 && b.items.size() <= 256) {
+            size_t rows = a.items.size() + 1, cols = b.items.size() + 1;
+            std::vector<size_t> lcs(rows * cols, 0);
+            auto cell = [&](size_t i, size_t j) -> size_t& { return lcs[i * cols + j]; };
+            for (size_t i = a.items.size(); i-- > 0;)
+                for (size_t j = b.items.size(); j-- > 0;)
+                    cell(i, j) = diff_equal(a.items[i], b.items[j])
+                                     ? 1 + cell(i + 1, j + 1)
+                                     : std::max(cell(i + 1, j), cell(i, j + 1));
+
+            std::vector<std::pair<size_t, size_t>> matches;
+            size_t i = 0, j = 0;
+            while (i < a.items.size() && j < b.items.size()) {
+                if (diff_equal(a.items[i], b.items[j])) {
+                    matches.push_back({i++, j++});
+                } else if (cell(i + 1, j) >= cell(i, j + 1)) {
+                    i++;
+                } else {
+                    j++;
+                }
+            }
+
+            auto compare_gap = [&](size_t left_end, size_t right_end, size_t& left, size_t& right) {
+                size_t common = std::min(left_end - left, right_end - right);
+                for (size_t k = 0; k < common; k++)
+                    diff_into(a.items[left + k], b.items[right + k],
+                              path + "[" + std::to_string(left + k) + "]", out);
+                left += common;
+                right += common;
+                while (left < left_end) {
+                    out.push_back({'-', path + "[" + std::to_string(left) + "]", diff_show(a.items[left]), ""});
+                    left++;
+                }
+                while (right < right_end) {
+                    out.push_back({'+', path + "[" + std::to_string(right) + "]", "", diff_show(b.items[right])});
+                    right++;
+                }
+            };
+
+            size_t left = 0, right = 0;
+            for (const auto& match : matches) {
+                compare_gap(match.first, match.second, left, right);
+                left = match.first + 1;
+                right = match.second + 1;
+            }
+            compare_gap(a.items.size(), b.items.size(), left, right);
+        } else {
+            size_t common = std::min(a.items.size(), b.items.size());
+            for (size_t k = 0; k < common; k++)
+                diff_into(a.items[k], b.items[k], path + "[" + std::to_string(k) + "]", out);
+            for (size_t k = common; k < a.items.size(); k++)
+                out.push_back({'-', path + "[" + std::to_string(k) + "]", diff_show(a.items[k]), ""});
+            for (size_t k = common; k < b.items.size(); k++)
+                out.push_back({'+', path + "[" + std::to_string(k) + "]", "", diff_show(b.items[k])});
+        }
         return;
     }
     if (!diff_same_scalar(a, b)) out.push_back({'~', path, diff_show(a), diff_show(b)});
