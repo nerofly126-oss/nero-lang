@@ -84,6 +84,18 @@ $ ./nero diff examples/k8s.nero --by metadata.name web-staging web-prod
 
 Lists of records that all have a unique `name` (containers, env vars) are matched by name, so reordering them is not a change. `--ignore PATH` hides a field and everything under it. You can also diff two files: `nero diff a.nero b.nero`. The exit code is 0 for identical, 1 for different and 2 for trouble, so it works in CI.
 
+## Check Kubernetes output against an API server
+
+The demo emits six resources. With Docker, [kind](https://kind.sigs.k8s.io/) and `kubectl` installed, start a disposable local cluster and ask its API server to validate them without creating the resources:
+
+```
+kind create cluster --name nero-demo --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+./nero eval examples/k8s.nero --yaml | kubectl --context kind-nero-demo apply --dry-run=server --validate=strict -f -
+kind delete cluster --name nero-demo
+```
+
+The same server-side dry-run runs in CI against a pinned kind cluster. It checks the manifests with Kubernetes itself; it does not create workloads.
+
 ## A quick tour
 
 ```
@@ -174,7 +186,7 @@ examples/          small programs, the Kubernetes demo, and the bad ones on purp
 
 - The YAML output parses back (PyYAML) to the same data as the JSON output for every evaluating example, plus a file of 68 awkward strings and keys.
 - CI uses `kubernetes-validate` 1.37.0 to validate the six generated manifests (three Deployments, three Services) against Kubernetes 1.28, 1.30 and 1.33 schemas in strict mode. It also checks that schema validation rejects `replicas: "3"`.
-- They have **not** been applied to a real cluster. If you try `./nero eval examples/k8s.nero --yaml | kubectl apply --dry-run=client -f -`, I would like to hear what happens.
+- CI also sends the generated documents to a disposable Kubernetes API server with `kubectl apply --dry-run=server --validate=strict`. This validates server-side without persisting resources.
 - `check` was run over every program in the test suites that evaluates successfully. It stayed quiet on all of them except three that divide by a literal zero inside a branch that never runs.
 
 ## Known gaps

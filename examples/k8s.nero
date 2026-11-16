@@ -1,5 +1,5 @@
 # run with: ./nero eval examples/k8s.nero --yaml
-# straight into a cluster: ./nero eval examples/k8s.nero --yaml | kubectl apply --dry-run=client -f -
+# server-side validation: ./nero eval examples/k8s.nero --yaml | kubectl apply --dry-run=server --validate=strict -f -
 
 import "k8s_schemas.nero"
 
