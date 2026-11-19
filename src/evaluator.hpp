@@ -218,11 +218,34 @@ inline bool yaml_is_block(const Value& v) {
     return (v.kind == Value::List || v.kind == Value::Record) && !v.items.empty();
 }
 
-inline std::string yaml_scalar(const Value& v) {
+inline bool yaml_uses_block_scalar(const Value& v) {
+    return v.kind == Value::Str && v.s.find('\n') != std::string::npos &&
+           v.s.find('\r') == std::string::npos && v.s.find('\t') == std::string::npos;
+}
+
+inline std::string yaml_multiline(const std::string& s, int indent) {
+    size_t trailing = 0;
+    while (trailing < s.size() && s[s.size() - trailing - 1] == '\n') trailing++;
+    std::string out = trailing == 0 ? "|2-\n" : trailing == 1 ? "|2\n" : "|2+\n";
+    size_t content_end = s.size() - trailing;
+    size_t start = 0;
+    std::string pad(static_cast<size_t>(indent + 2), ' ');
+    while (start < content_end) {
+        size_t end = s.find('\n', start);
+        if (end == std::string::npos || end > content_end) end = content_end;
+        out += pad + s.substr(start, end - start) + "\n";
+        start = end + 1;
+    }
+    size_t blank_lines = trailing > 0 ? trailing - (content_end > 0 ? 1 : 0) : 0;
+    for (size_t k = 0; k < blank_lines; k++) out += pad + "\n";
+    return out;
+}
+
+inline std::string yaml_scalar(const Value& v, int indent = 0) {
     switch (v.kind) {
         case Value::Int:    return std::to_string(v.i);
         case Value::Bool:   return v.i ? "true" : "false";
-        case Value::Str:    return yaml_text(v.s);
+        case Value::Str:    return yaml_uses_block_scalar(v) ? yaml_multiline(v.s, indent) : yaml_text(v.s);
         case Value::List:   return "[]";     // only empty collections are written inline
         case Value::Record: return "{}";
         case Value::Secret: return "{}";     // never reached: to_yaml turns secrets into records first
@@ -238,12 +261,16 @@ inline std::string yaml_block(const Value& v, int indent) {
         if (v.kind == Value::Record) {
             out += pad + yaml_text(v.keys[k]) + ":";
             if (yaml_is_block(item)) out += "\n" + yaml_block(item, indent + 2);
-            else out += " " + yaml_scalar(item) + "\n";
+            else {
+                out += " " + yaml_scalar(item, indent);
+                if (!yaml_uses_block_scalar(item)) out += "\n";
+            }
         } else if (yaml_is_block(item)) {
             // the item's first line shares the line with its dash: "- name: a"
             out += pad + "- " + yaml_block(item, indent + 2).substr(static_cast<size_t>(indent) + 2);
         } else {
-            out += pad + "- " + yaml_scalar(item) + "\n";
+            out += pad + "- " + yaml_scalar(item, indent);
+            if (!yaml_uses_block_scalar(item)) out += "\n";
         }
     }
     return out;
@@ -251,7 +278,9 @@ inline std::string yaml_block(const Value& v, int indent) {
 
 inline std::string to_yaml(const Value& original) {
     Value v = refs_as_records(original);
-    return yaml_is_block(v) ? yaml_block(v, 0) : yaml_scalar(v) + "\n";
+    if (yaml_is_block(v)) return yaml_block(v, 0);
+    std::string scalar = yaml_scalar(v);
+    return yaml_uses_block_scalar(v) ? scalar : scalar + "\n";
 }
 
 inline bool deep_eq(const Value& a, const Value& b) {

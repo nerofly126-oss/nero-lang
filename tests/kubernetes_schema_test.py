@@ -3,6 +3,7 @@
 from copy import deepcopy
 import json
 import subprocess
+import tempfile
 
 import kubernetes_validate
 import yaml
@@ -23,6 +24,36 @@ def json_documents(text):
 
 
 def main():
+    yaml_source = r'''emit {
+        plain: "line1\nline2",
+        one_trailing: "line1\nline2\n",
+        many_trailing: "line1\nline2\n\n",
+        indented: " leading\n  deeper\nend",
+        blank_start: "\nstart\n",
+        blank_only: "\n\n",
+        nested: {script: "echo one\necho two"},
+        items: ["first\nsecond", "third\nfourth"],
+        item_records: [{script: "first\nsecond"}],
+    }'''
+    with tempfile.TemporaryDirectory() as tmp:
+        source = tmp + "/multiline.nero"
+        with open(source, "w", encoding="utf-8") as output:
+            output.write(yaml_source)
+        multiline_yaml = subprocess.run(
+            ["./nero", "eval", source, "--yaml"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        multiline_json = subprocess.run(
+            ["./nero", "eval", source],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if yaml.safe_load(multiline_yaml.stdout) != json.loads(multiline_json.stdout):
+            raise AssertionError("multiline YAML strings did not round-trip to the same values")
+
     result = subprocess.run(
         ["./nero", "eval", "examples/k8s.nero", "--yaml"],
         check=True,

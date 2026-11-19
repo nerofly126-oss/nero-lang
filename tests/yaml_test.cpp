@@ -74,7 +74,13 @@ int main() {
     assert(to_yaml(S(" a")) == "\" a\"\n");
     assert(to_yaml(S("a ")) == "\"a \"\n");
     assert(to_yaml(S("a  b")) == "\"a  b\"\n");
-    assert(to_yaml(S("line1\nline2")) == "\"line1\\nline2\"\n");
+    assert(to_yaml(S("line1\nline2")) == "|2-\n  line1\n  line2\n");
+    assert(to_yaml(S("line1\nline2\n")) == "|2\n  line1\n  line2\n");
+    assert(to_yaml(S("line1\nline2\n\n")) == "|2+\n  line1\n  line2\n  \n");
+    assert(to_yaml(S("\nstart\n")) == "|2\n  \n  start\n");
+    assert(to_yaml(R({{"script", S("echo one\necho two")}})) == "script: |2-\n  echo one\n  echo two\n");
+    assert(to_yaml(L({S("first\nsecond"), S("third\nfourth")})) ==
+           "- |2-\n  first\n  second\n- |2-\n  third\n  fourth\n");
     assert(to_yaml(S("tab\there")) == "\"tab\\there\"\n");
     assert(to_yaml(S("say \"hi\"")) == "\"say \\\"hi\\\"\"\n");
     assert(to_yaml(S("back\\slash")) == "\"back\\\\slash\"\n");

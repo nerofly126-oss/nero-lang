@@ -226,7 +226,7 @@ examples/          small programs, the Kubernetes demo, and the bad ones on purp
 - The bundled Kubernetes schemas cover the demo and common core options such as metadata annotations, container commands and arguments, pod restart settings, and probe timing. They are not complete Kubernetes API schemas.
 - There is no in-place assignment into lists or records. Lists can be extended with `+` or rebuilt with comprehensions; records are built with literals.
 - Scope is flat per function. Functions can read and update top-level variables, but their local variables remain separate.
-- YAML output has no comments, anchors or block scalars. Unusual strings are double quoted.
+- YAML output has no comments or anchors. Multiline strings use literal block scalars; unusual single-line strings are double quoted.
 - `check` catches constant integer overflow, division by zero, and out-of-range indexes in literal lists. It cannot prove runtime-dependent overflow, recursion depth, or indexes safe.
 - `diff` aligns unchanged items in unnamed lists up to 256 items per side, then compares remaining items in order; larger lists use positional comparison. `--by` pairs documents in the order they were emitted.
 - The evaluator is a tree walker, roughly two orders of magnitude slower than the compiled backend on a recursive `fib`. That is fine for config and not fine for anything else.

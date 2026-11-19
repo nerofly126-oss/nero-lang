@@ -370,7 +370,7 @@ e:
 f: {}
 ```
 
-There is no YAML comment, anchor or block-scalar output.
+There is no YAML comment or anchor output. Multiline strings use literal block scalars with chomping indicators to preserve trailing newlines.
 
 ## Checks before running: `nero check`
 
