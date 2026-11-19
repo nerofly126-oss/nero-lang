@@ -550,7 +550,21 @@ print "the password is {s}"
 error: example.nero:2:25: cannot put a secret inside a string (only int, str and bool)
 ```
 
-What consumes `secretRef` is up to you. For Kubernetes you would write a schema that turns it into whatever shape you need.
+For Kubernetes environment variables, use the two-argument form in `valueFrom`:
+
+```nero yaml
+emit {name: "DB_PASSWORD", valueFrom: secret("database", "password")}
+```
+
+```output
+name: DB_PASSWORD
+valueFrom:
+  secretKeyRef:
+    name: database
+    key: password
+```
+
+n+ never reads the referenced value, and it cannot check whether the named Secret and key exist in your cluster.
 
 ## 11. Catching mistakes early: check and diff
 

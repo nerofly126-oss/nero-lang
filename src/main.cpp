@@ -3,6 +3,7 @@
 #include "diff.hpp"
 #include "evaluator.hpp"
 #include "loader.hpp"
+#include "policy.hpp"
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -16,6 +17,8 @@
 int main(int argc, char** argv) {
     if (argc >= 2 && std::string(argv[1]) == "diff")
         return diff_main(std::vector<std::string>(argv + 2, argv + argc), std::cout, std::cerr);
+    if (argc >= 2 && std::string(argv[1]) == "policy")
+        return policy_main(std::vector<std::string>(argv + 2, argv + argc), std::cout, std::cerr);
     OutFormat fmt = OutFormat::Json;
     bool format_given = false;
     std::vector<std::string> pos;
@@ -30,7 +33,7 @@ int main(int argc, char** argv) {
     if (pos.size() == 1) { mode = "run"; path = pos[0].c_str(); }
     else if (pos.size() == 2) { mode = pos[0]; path = pos[1].c_str(); }
     if (!path || (mode != "run" && mode != "eval" && mode != "--tokens" && mode != "--ast" && mode != "--bin" && mode != "check")) {
-        std::cerr << "usage: nero [run|eval|check|--tokens|--ast|--bin] <file.nero> [--yaml|--json]\n";
+        std::cerr << "usage: nero [run|eval|check|policy|--tokens|--ast|--bin] <file.nero> [--yaml|--json]\n";
         return 1;
     }
 #if !NERO_HAS_JIT

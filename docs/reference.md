@@ -9,9 +9,13 @@ nero file.nero                    run with the compiled backend (a subset, see t
 nero run file.nero                the same
 nero eval file.nero [--json|--yaml]   run with the evaluator: the full language. JSON is the default.
 nero check file.nero              static pass over everything, called or not
-nero diff a.nero b.nero [--ignore PATH]
-nero diff a.nero b.nero --match PATH [--ignore PATH]
-nero diff file.nero --by PATH X Y [--ignore PATH]
+nero policy file.nero             review emitted Kubernetes resources
+nero diff a.nero b.nero [--ignore PATH] [--allow-ignored]
+nero diff a.nero b.nero --json
+nero diff a.nero b.nero --github
+nero diff a.nero b.nero --match PATH [--ignore PATH] [--allow-ignored]
+nero diff a.nero b.nero --match-k8s [--ignore PATH] [--allow-ignored]
+nero diff file.nero --by PATH X Y [--ignore PATH] [--allow-ignored]
 nero --tokens file.nero           print the tokens
 nero --ast file.nero              print the syntax tree (imports already merged in)
 nero --bin file.nero              write the generated machine code to out.bin
@@ -251,13 +255,26 @@ A variable named like a schema and followed by `{` is read as a typed literal, s
 | `range(n)` | the list `[0, 1, ..., n-1]`. `n` cannot be negative or above 1,000,000. |
 | `env("NAME")` | the environment variable, an error when it is not set |
 | `env("NAME", "fallback")` | the environment variable, or the fallback |
-| `secret("NAME")` | a reference to a secret |
+| `secret("NAME")` | a generic reference to a secret |
+| `secret("NAME", "KEY")` | a Kubernetes `secretKeyRef` reference |
 
 A function cannot be given one of these names. In `eval` the name of a variable may still be `env`.
 
 ### Secrets
 
-`secret("NAME")` never reads anything. It makes a value of type `secret`, and written out it is the record `{secretRef: "NAME"}`. Because the value is never read it cannot leak. A secret cannot be put in a string, passed to `str()`, joined, or compared (even inside a list or record). `nero diff` compares secrets by name.
+`secret("NAME")` never reads anything. It makes a value of type `secret`, and written out it is the generic record `{secretRef: "NAME"}`. `secret("NAME", "KEY")` writes `{secretKeyRef: {name: "NAME", key: "KEY"}}`; put it under Kubernetes `valueFrom`. Neither form reads a value. A secret cannot be put in a string, passed to `str()`, joined, or compared (even inside a list or record). `nero diff` compares Kubernetes references by both name and key. It cannot verify that a Secret or key exists in a cluster.
+
+```nero yaml
+emit {name: "DB_PASSWORD", valueFrom: secret("database", "password")}
+```
+
+```output
+name: DB_PASSWORD
+valueFrom:
+  secretKeyRef:
+    name: database
+    key: password
+```
 
 ## Schemas
 
@@ -398,14 +415,25 @@ error: example.nero:2:14: cannot use '+' on an int and a str (use str(...) to tu
 1 problem found
 ```
 
+## Kubernetes policy: `nero policy`
+
+`policy` evaluates emitted documents and checks supported Kubernetes resources. It reports untagged or `latest` images, `privileged: true`, missing or enabled `allowPrivilegeEscalation`, UID 0, missing `runAsNonRoot: true`, missing CPU or memory limits, missing or enabled `automountServiceAccountToken`, and Services of type `NodePort` or `LoadBalancer`. It inspects regular, init and ephemeral containers in Pods, Deployments, StatefulSets, DaemonSets, Jobs and CronJobs, plus Services. An unsupported resource kind is reported as uninspected, so it cannot silently pass.
+
+These are opinionated baseline checks, not a complete security policy engine. They do not infer whether an image tag is immutable, whether an external Service is approved, or what a workload needs at runtime. Use Kubernetes schema validation and cluster admission policies for those checks.
+
 ## Comparing: `nero diff`
 
 Evaluates the files and compares the documents they `emit`:
 
-- `nero diff a.nero b.nero` pairs the documents of both files by position.
+- `nero diff a.nero b.nero` pairs Kubernetes documents by API identity when either file emits Kubernetes resources; all documents on both sides must then have valid, unique Kubernetes identities. Other documents are paired by position.
 - `nero diff a.nero b.nero --match PATH` pairs documents by the scalar value at a dotted field path, such as `metadata.name`. Every document in both files must have a value there, and the values must be unique within each file. Documents that only occur on one side are reported as additions or removals.
+- `nero diff a.nero b.nero --match-k8s` forces Kubernetes identity validation and pairing by `apiVersion`, `kind`, `metadata.namespace` and `metadata.name`. The first, second and fourth fields must be non-empty strings; namespace may be omitted but must be a string when present. An omitted namespace is distinct from any explicit namespace, including `default`, because the matcher does not infer API defaulting or resource scope. Every resulting identity must be unique within its file.
 - `nero diff file.nero --by PATH X Y` takes the documents of one file whose field `PATH` (a dotted path such as `metadata.name`) equals `X` and the ones where it equals `Y`, and pairs those. The `--by` field itself is not reported.
-- `--ignore PATH` hides a field and everything below it. It can be repeated.
+- `--ignore PATH` hides a field and everything below it. It can be repeated. If a change is hidden, `diff` prints the changed path and returns 1; pass `--allow-ignored` with at least one `--ignore` only when the suppressed changes should not fail the review.
+
+`--json` wraps the result in a JSON object with `status`, `exitCode`, `output` and `error`. `output` contains the human-readable diff transcript; scripts can use `status` and `exitCode` without parsing it. Individual changes are not yet exposed as structured fields.
+
+`--github` prints GitHub Actions workflow annotations for the diff and appends the transcript to `$GITHUB_STEP_SUMMARY` when that variable is set. It requires no token. `--json` and `--github` cannot be combined.
 
 One line per change: `~ path: before -> after`, `+ path: value`, `- path: value`. A list whose items are all records with a unique string `name` is compared by that name. Other lists up to 256 items per side align unchanged items and compare unmatched items in order; larger lists are compared by position. `print` output is not part of a diff. The exit code is 0 for identical, 1 for different, 2 for an error.
 

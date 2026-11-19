@@ -75,7 +75,7 @@ int main() {
                 "field 'n' of P must be a bool"));
     assert(says("fn f() -> bool {\n  return if true { 1 } else { \"a\" }\n}\nprint f()\n",
                 "this function returns bool"));
-    assert(clean("print secret(\"X\")\nprint env(\"A\", \"b\")\n"));
+    assert(clean("print secret(\"X\")\nprint secret(\"db\", \"password\")\nprint env(\"A\", \"b\")\n"));
     // a variable that gets assigned again may change what is inside it, so only its kind is trusted
     assert(clean("type S {\n  n: [str]\n}\nlet x = [1]\nx = [\"a\"]\nprint S { n: x }\n"));
     assert(clean("type A {\n  a: int\n}\ntype B {\n  b: int\n}\nlet x = A { a: 1 }\nx = B { b: 2 }\nprint x.b\n"));
@@ -147,8 +147,10 @@ int main() {
     assert(says("print 5[0]", "cannot index an int"));
     assert(says("print env(1)", "'env' needs the name as a str, got an int"));
     assert(says("print env(\"A\", 1)", "the fallback of 'env' must be a str, got an int"));
-    assert(says("print secret()", "'secret' takes 1 argument, got 0"));
+    assert(says("print secret()", "'secret' takes 1 or 2 arguments, got 0"));
     assert(says("print secret(\"\")", "needs a name that is not empty"));
+    assert(says("print secret(\"db\", 1)", "the key of 'secret' must be a str"));
+    assert(says("print secret(\"db\", \"\")", "'secret' needs a key that is not empty"));
 
     // ---- it reports everything, in order of position ----
     std::vector<std::string> many = chk("print x\nprint y\nprint nope()\n");

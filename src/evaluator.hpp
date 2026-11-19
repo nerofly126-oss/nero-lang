@@ -15,6 +15,7 @@ struct Value {
     enum Kind { Int, Str, Bool, List, Record, Secret } kind = Int;
     int64_t i = 0;                   // Int, or 0 and 1 for Bool
     std::string s;                   // Str, or the NAME of a Secret (its value is never read)
+    std::string secret_key;          // optional Kubernetes Secret key reference
     std::vector<std::string> keys;   // Record: field names, parallel to items
     std::vector<Value> items;        // List elements, or Record field values
     std::string type_name;           // a record built from a schema carries the schema's name
@@ -108,8 +109,16 @@ inline Value default_value(Type t) { Value v; v.kind = kind_of(t); return v; }
 // A secret is only a reference, so a reference is all that is ever written out.
 inline Value secret_as_record(const Value& v) {
     Value r = Value::record();
-    r.keys.push_back("secretRef");
-    r.items.push_back(Value::text(v.s));
+    if (v.secret_key.empty()) {
+        r.keys.push_back("secretRef");
+        r.items.push_back(Value::text(v.s));
+    } else {
+        Value ref = Value::record();
+        ref.keys = {"name", "key"};
+        ref.items = {Value::text(v.s), Value::text(v.secret_key)};
+        r.keys.push_back("secretKeyRef");
+        r.items.push_back(std::move(ref));
+    }
     return r;
 }
 
@@ -750,9 +759,8 @@ private:
     Value eval_env(const Expr& e, Frame& f) {
         size_t n = e.args.size();
         bool is_secret = e.name == "secret";
-        if (n < 1 || n > (is_secret ? 1u : 2u))
-            fail(e.line, e.col, "'" + e.name + "' takes " + (is_secret ? "1 argument" : "1 or 2 arguments") +
-                                    ", got " + std::to_string(n));
+        if (n < 1 || n > 2)
+            fail(e.line, e.col, "'" + e.name + "' takes 1 or 2 arguments, got " + std::to_string(n));
         const Expr& a = *e.args[0];
         Value name = eval(a, f);
         if (name.kind != Value::Str) fail(a.line, a.col, "'" + e.name + "' needs the name as a str, got " + describe_value(name));
@@ -761,6 +769,13 @@ private:
             Value v;
             v.kind = Value::Secret;
             v.s = name.s;
+            if (n == 2) {
+                Value key = eval(*e.args[1], f);
+                if (key.kind != Value::Str)
+                    fail(e.args[1]->line, e.args[1]->col, "the key of 'secret' must be a str, got " + describe_value(key));
+                if (key.s.empty()) fail(e.args[1]->line, e.args[1]->col, "'secret' needs a key that is not empty");
+                v.secret_key = key.s;
+            }
             return v;
         }
         Value fallback;

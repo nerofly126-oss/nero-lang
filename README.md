@@ -64,6 +64,17 @@ error: examples/check_demo.nero:14:35: Port has no field 'protocl' (did you mean
 
 `check` only reports what it can prove. When it cannot tell a type (a plain `{ }` record, a value that depends on a branch) it stays quiet. So a clean result means "nothing provably wrong", not "correct", and the message says exactly that.
 
+### policy: review emitted Kubernetes resources
+
+`policy` evaluates emitted resources and checks a small built-in security baseline:
+
+```
+$ ./nero policy examples/k8s.nero
+ok: Kubernetes policy checks passed for 6 documents
+```
+
+It flags untagged or `latest` images, privileged containers, privilege escalation, root execution, missing non-root settings, missing CPU or memory limits, enabled service-account token mounting, and externally exposed Services. These checks are a review aid; they do not replace Kubernetes schema or admission-policy validation. Unknown resource kinds are reported because n+ cannot inspect them.
+
 ### diff: what changes between environments
 
 `examples/k8s.nero` generates a Deployment and a Service for dev, staging and prod from one loop. To see what differs between two of them:
@@ -82,15 +93,17 @@ $ ./nero diff examples/k8s.nero --by metadata.name web-staging web-prod
 7 changes
 ```
 
-Lists of records that all have a unique `name` (containers, env vars) are matched by name, so reordering them is not a change. `--ignore PATH` hides a field and everything under it. You can also diff two files: `nero diff a.nero b.nero`. The exit code is 0 for identical, 1 for different and 2 for trouble, so it works in CI.
+Lists of records that all have a unique `name` (containers, env vars) are matched by name, so reordering them is not a change. `--ignore PATH` hides a field and everything under it, but reports when it suppressed a change and fails the diff unless you also pass `--allow-ignored`. For two files, Kubernetes resources are paired by API identity automatically; generic documents are paired by position. The exit code is 0 for identical, 1 for different or suppressed changes, and 2 for trouble.
 
-When reviewing two generated revisions, pair resources by a field that is unique in each file instead of relying on emission order:
+For non-Kubernetes documents, pair them by a field that is unique in each file instead of relying on emission order:
 
 ```
 ./nero diff old.nero new.nero --match metadata.name
 ```
 
-This keeps reordering from looking like a change and reports resources that only exist on one side. If the chosen field is missing or duplicated, `diff` stops with an error rather than guessing.
+This keeps reordering from looking like a change and reports documents that only exist on one side. If the chosen field is missing or duplicated, `diff` stops with an error rather than guessing.
+
+For Kubernetes manifests, automatic matching uses `apiVersion`, `kind`, `metadata.namespace` and `metadata.name`. This keeps same-named resources in different namespaces or with different kinds separate. `--match-k8s` forces this validation; an omitted namespace stays distinct from an explicit namespace because n+ does not guess Kubernetes scope or defaulting.
 
 ## Run the Kubernetes demo
 
@@ -174,7 +187,7 @@ host: env("DB_HOST", "db-{stage}.internal")     # a fallback, or env("DB_HOST") 
 password: secret("DB_PASSWORD_{stage}")         # a reference, never a value
 ```
 
-`secret("NAME")` does not read the environment at all. It is a reference, and it is written out as `secretRef: NAME`. You cannot put it in a string, call `str()` on it or compare it, so the value cannot leak into generated output. See `examples/secrets.nero`.
+`secret("NAME")` does not read the environment at all. It is a generic reference written as `secretRef: NAME`. For a Kubernetes `valueFrom` field, use `secret("SECRET_NAME", "KEY")`; it writes the Kubernetes `secretKeyRef` shape. n+ never reads the secret value. It cannot verify that the Kubernetes Secret exists or contains that key. See `examples/secrets.nero`.
 
 ## Commands
 
@@ -182,8 +195,13 @@ password: secret("DB_PASSWORD_{stage}")         # a reference, never a value
 nero file.nero                    compiled backend: ints and strings only, runs as machine code
 nero eval file.nero [--yaml]      the full language, prints JSON or YAML
 nero check file.nero              static pass over everything, exit 1 on problems
+nero policy file.nero             review emitted Kubernetes resources
 nero diff a.nero b.nero           what changes between two files
 nero diff a.nero b.nero --match PATH   pair documents by a unique field
+nero diff a.nero b.nero --match-k8s    pair Kubernetes resources by API identity
+nero diff a.nero b.nero --json         structured status and transcript for scripts
+nero diff a.nero b.nero --github       GitHub Actions annotations and step summary
+nero diff a.nero b.nero --ignore PATH --allow-ignored   explicitly permit ignored changes
 nero diff f.nero --by PATH X Y    what changes between two documents of one file
 nero --tokens | --ast file.nero   look at the lexer and parser output
 nero --bin file.nero              write the generated machine code to out.bin
@@ -195,12 +213,12 @@ Errors look like `error: file.nero:line:col: message`.
 
 ```
 g++ -std=c++20 -O2 -Wall -Wextra -o nero src/main.cpp
-for t in lexer parser codegen eval schema flow yaml import check diff; do
+for t in lexer parser codegen eval schema flow yaml import check diff policy; do
     g++ -std=c++20 -O2 -Wall -Wextra -o ${t}_test tests/${t}_test.cpp && ./${t}_test
 done
 ```
 
-Ten assert-based suites, each printing `all ... tests passed`. `python3 tests/docs_test.py` runs every example in the docs. Built and tested with g++ 13.3 on Ubuntu 24.04. The evaluator, `check` and `diff` are plain C++ and should also build on macOS with a C++20 compiler. `nero run` generates x86-64 machine code, so it requires an x86-64 process: this works natively on Intel Macs and may work under Rosetta on Apple Silicon. GitHub Actions CI targets Ubuntu, Intel macOS and Apple Silicon macOS; it runs the machine-code tests only on x86-64. The CI and release workflows are generated from their matching `.nero` files, and CI checks that both generated YAML files match.
+Eleven assert-based suites, each printing `all ... tests passed`. `python3 tests/docs_test.py` runs every example in the docs. Built and tested with g++ 13.3 on Ubuntu 24.04. The evaluator, `check`, `policy` and `diff` are plain C++ and should also build on macOS with a C++20 compiler. `nero run` generates x86-64 machine code, so it requires an x86-64 process: this works natively on Intel Macs and may work under Rosetta on Apple Silicon. GitHub Actions CI targets Ubuntu, Intel macOS and Apple Silicon macOS; it runs the machine-code tests only on x86-64. The CI and release workflows are generated from their matching `.nero` files, and CI checks that both generated YAML files match.
 
 ## Releases
 
@@ -221,6 +239,7 @@ src/diff.hpp       nero diff
 src/main.cpp       command line
 tests/             one suite per part
 examples/          small programs, the Kubernetes demo, and the bad ones on purpose
+src/policy.hpp     Kubernetes resource policy checks
 ```
 
 ## What has and has not been verified
@@ -228,11 +247,14 @@ examples/          small programs, the Kubernetes demo, and the bad ones on purp
 - The YAML output parses back (PyYAML) to the same data as the JSON output for every evaluating example, plus a file of 68 awkward strings and keys.
 - CI uses `kubernetes-validate` 1.37.0 to validate the six generated manifests (three Deployments, three Services) against Kubernetes 1.28, 1.30 and 1.33 schemas in strict mode. It also checks that schema validation rejects `replicas: "3"`.
 - CI sends the generated documents to a disposable Kubernetes API server with `kubectl apply --dry-run=server --validate=strict`, then applies them and verifies the dev deployment responds over HTTP.
+- CI runs `nero policy` on the demo before schema and API-server validation.
 - `check` examines uncalled functions and unreachable branches too. It reports statically provable errors such as constant overflow or division by zero even when that branch would not run.
 
 ## Known gaps
 
 - The bundled Kubernetes schemas cover the demo and common core options such as metadata annotations, container commands and arguments, pod restart settings, and probe timing. They are not complete Kubernetes API schemas.
+- `policy` checks a defined set of workload and Service fields. It is not a complete security policy engine and reports resource kinds it cannot inspect.
+- `secret(name, key)` emits the Kubernetes Secret reference shape but does not check cluster Secret existence, key presence, or permissions.
 - There is no in-place assignment into lists or records. Lists can be extended with `+` or rebuilt with comprehensions; records are built with literals.
 - Scope is flat per function. Functions can read and update top-level variables, but their local variables remain separate.
 - YAML output has no comments or anchors. Multiline strings use literal block scalars; unusual single-line strings are double quoted.

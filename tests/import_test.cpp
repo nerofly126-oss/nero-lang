@@ -178,8 +178,8 @@ int main() {
     assert(has("let s = secret(\"X\")\nprint s == s", "secrets cannot be compared"));
     assert(has("let s = secret(\"X\")\nprint [s] != [s]", "secrets cannot be compared"));
     assert(has("let s = secret(\"X\")\nprint {a: s} == {a: 1}", "secrets cannot be compared"));
-    assert(has("print secret()", "takes 1 argument"));
-    assert(has("print secret(\"a\", \"b\")", "takes 1 argument"));
+    assert(has("print secret()", "takes 1 or 2 arguments"));
+    assert(has("print secret(\"a\", \"b\", \"c\")", "takes 1 or 2 arguments"));
     assert(has("print secret(1)", "needs the name as a str"));
     assert(has("type secret { a: int }", "builtin type"));
     assert(has("fn secret() -> int {\n  return 1\n}", "builtin"));

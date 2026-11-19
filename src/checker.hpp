@@ -680,15 +680,18 @@ private:
 
         if (e.name == "env" || e.name == "secret") {
             bool is_secret = e.name == "secret";
-            if (n < 1 || n > (is_secret ? 1u : 2u)) {
-                error(e.line, e.col, "'" + e.name + "' takes " + (is_secret ? "1 argument" : "1 or 2 arguments") + ", got " + std::to_string(n));
+            if (n < 1 || n > 2) {
+                error(e.line, e.col, "'" + e.name + "' takes 1 or 2 arguments, got " + std::to_string(n));
             } else {
                 if (st_known(args[0]) && args[0].kind != SType::Str)
                     error(e.args[0]->line, e.args[0]->col, "'" + e.name + "' needs the name as a str, got " + st_phrase(args[0]));
                 else if (e.args[0]->kind == Expr::Str && e.args[0]->name.empty())
                     error(e.args[0]->line, e.args[0]->col, "'" + e.name + "' needs a name that is not empty");
                 if (n == 2 && st_known(args[1]) && args[1].kind != SType::Str)
-                    error(e.args[1]->line, e.args[1]->col, "the fallback of 'env' must be a str, got " + st_phrase(args[1]));
+                    error(e.args[1]->line, e.args[1]->col, is_secret ? "the key of 'secret' must be a str, got " + st_phrase(args[1])
+                                                                     : "the fallback of 'env' must be a str, got " + st_phrase(args[1]));
+                else if (is_secret && n == 2 && e.args[1]->kind == Expr::Str && e.args[1]->name.empty())
+                    error(e.args[1]->line, e.args[1]->col, "'secret' needs a key that is not empty");
             }
             return is_secret ? st(SType::Secret) : st(SType::Str);
         }

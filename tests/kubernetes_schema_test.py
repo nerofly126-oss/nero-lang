@@ -109,6 +109,31 @@ def main():
     for version in ("1.28", "1.30", "1.33"):
         kubernetes_validate.validate(extended, version, strict=True)
 
+    with tempfile.TemporaryDirectory() as tmp:
+        secret_source = tmp + "/secret-ref.nero"
+        with open(secret_source, "w", encoding="utf-8") as output:
+            output.write(r'''emit {
+                apiVersion: "v1",
+                kind: "Pod",
+                metadata: {name: "secret-ref-check"},
+                spec: {containers: [{
+                    name: "app",
+                    image: "example.invalid/app:1.0",
+                    env: [{name: "PASSWORD", valueFrom: secret("database", "password")}],
+                }]},
+            }''')
+        secret_yaml = subprocess.run(
+            ["./nero", "eval", secret_source, "--yaml"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        secret_doc = yaml.safe_load(secret_yaml.stdout)
+        value_from = secret_doc["spec"]["containers"][0]["env"][0]["valueFrom"]
+        if value_from != {"secretKeyRef": {"name": "database", "key": "password"}}:
+            raise AssertionError("secret(name, key) did not emit a Kubernetes secretKeyRef")
+        kubernetes_validate.validate(secret_doc, "1.33", strict=True)
+
     invalid = deepcopy(documents[0])
     invalid["spec"]["replicas"] = "3"
     try:

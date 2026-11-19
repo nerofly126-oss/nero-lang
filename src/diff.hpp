@@ -3,6 +3,8 @@
 #include "loader.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
@@ -13,6 +15,7 @@
 // "nero diff": what changes between two sets of emitted documents.
 //   nero diff a.nero b.nero                        the documents of a against the documents of b, by position
 //   nero diff a.nero b.nero --match metadata.name  pair documents by a unique scalar identity
+//   nero diff a.nero b.nero --match-k8s           pair Kubernetes resources by API identity
 //   nero diff f.nero --by PATH X Y                 inside one file: the documents whose PATH is X against those whose PATH is Y
 //   --ignore PATH (repeatable) hides a field and everything under it. The --by field is hidden on its own.
 // Output, one line per change:   ~ path: before -> after    + path: added value    - path: removed value
@@ -27,7 +30,8 @@ struct Change {
 };
 
 inline std::string diff_show(const Value& v) {
-    if (v.kind == Value::Secret) return "secret(" + v.s + ")";
+    if (v.kind == Value::Secret)
+        return v.secret_key.empty() ? "secret(" + v.s + ")" : "secret(" + v.s + ", " + v.secret_key + ")";
     return to_json(v, false);
 }
 
@@ -62,7 +66,8 @@ inline bool diff_named(const Value& v) {
 inline bool diff_same_scalar(const Value& a, const Value& b) {
     if (a.kind != b.kind) return false;
     if (a.kind == Value::Int || a.kind == Value::Bool) return a.i == b.i;
-    return a.s == b.s;     // Str, and the name of a Secret
+    if (a.kind == Value::Secret) return a.s == b.s && a.secret_key == b.secret_key;
+    return a.s == b.s;     // Str
 }
 
 inline bool diff_equal(const Value& a, const Value& b) {
@@ -232,6 +237,34 @@ inline std::string diff_identity(const Value& doc, const std::string& path, std:
     throw std::runtime_error("match field " + path + " must be a string, int or bool");
 }
 
+inline std::string diff_kubernetes_identity(const Value& doc, std::string& shown) {
+    if (doc.kind != Value::Record)
+        throw std::runtime_error("Kubernetes document must be a record");
+    const Value* api_version = diff_field(doc, "apiVersion");
+    const Value* kind = diff_field(doc, "kind");
+    const Value* metadata = diff_field(doc, "metadata");
+    const Value* name = metadata && metadata->kind == Value::Record ? diff_field(*metadata, "name") : nullptr;
+    const Value* name_space = metadata && metadata->kind == Value::Record ? diff_field(*metadata, "namespace") : nullptr;
+    if (!api_version || api_version->kind != Value::Str || api_version->s.empty() ||
+        !kind || kind->kind != Value::Str || kind->s.empty() || !name || name->kind != Value::Str || name->s.empty())
+        throw std::runtime_error("Kubernetes identity requires string apiVersion, kind and metadata.name");
+    if (name_space && name_space->kind != Value::Str)
+        throw std::runtime_error("Kubernetes identity metadata.namespace must be a string when present");
+
+    std::string ns = name_space ? name_space->s : "";
+    auto part = [](const std::string& value) { return std::to_string(value.size()) + ":" + value; };
+    std::string key = part(api_version->s) + part(kind->s) + part(name_space ? "present" : "absent") +
+                      part(ns) + part(name->s);
+    std::string api_text, kind_text, name_text, namespace_text;
+    json_string(api_version->s, api_text);
+    json_string(kind->s, kind_text);
+    json_string(name->s, name_text);
+    if (name_space) json_string(ns, namespace_text);
+    else namespace_text = "<unset>";
+    shown = "apiVersion=" + api_text + ", kind=" + kind_text + ", namespace=" + namespace_text + ", name=" + name_text;
+    return key;
+}
+
 // everything a file emits, in order. print output is not part of a diff.
 inline std::vector<Value> diff_collect(const std::string& file) {
     Program prog = Loader().load(file);
@@ -267,11 +300,23 @@ inline std::vector<const Value*> diff_select(const std::vector<Value>& docs, con
 }
 
 // one pair of documents: its changes, filtered
-inline std::vector<Change> diff_pair(const Value& a, const Value& b, const std::vector<std::string>& ignore) {
+inline std::vector<Change> diff_pair(const Value& a, const Value& b, const std::vector<std::string>& ignore,
+                                    std::vector<std::string>* ignored_paths = nullptr,
+                                    const std::vector<std::string>* report_ignore = nullptr,
+                                    const std::string& report_prefix = "") {
     std::vector<Change> all, keep;
     diff_into(a, b, "", all);
-    for (Change& c : all)
-        if (!diff_hidden(c.path, ignore)) keep.push_back(std::move(c));
+    for (Change& c : all) {
+        if (diff_hidden(c.path, ignore)) {
+            bool report = !report_ignore || !diff_hidden(c.path, *report_ignore);
+            std::string shown_path = report_prefix + (c.path.empty() ? "(value)" : c.path);
+            if (ignored_paths && report &&
+                std::find(ignored_paths->begin(), ignored_paths->end(), shown_path) == ignored_paths->end())
+                ignored_paths->push_back(shown_path);
+        } else {
+            keep.push_back(std::move(c));
+        }
+    }
     return keep;
 }
 
@@ -284,11 +329,95 @@ inline void diff_print(const std::vector<Change>& changes, std::ostream& os) {
     }
 }
 
+inline void diff_print_ignored(const std::vector<std::string>& paths, std::ostream& os) {
+    for (const std::string& path : paths)
+        os << "! ignored change at " << (path.empty() ? "(value)" : path) << "\n";
+}
+
+inline std::string diff_github_escape(const std::string& value) {
+    std::string out;
+    for (char c : value) {
+        if (c == '%') out += "%25";
+        else if (c == '\r') out += "%0D";
+        else if (c == '\n') out += "%0A";
+        else if (c == ',') out += "%2C";
+        else if (c == ':') out += "%3A";
+        else out += c;
+    }
+    return out;
+}
+
+inline std::string diff_html_escape(const std::string& value) {
+    std::string out;
+    for (char c : value) {
+        if (c == '&') out += "&amp;";
+        else if (c == '<') out += "&lt;";
+        else if (c == '>') out += "&gt;";
+        else out += c;
+    }
+    return out;
+}
+
 inline int diff_main(const std::vector<std::string>& args, std::ostream& out, std::ostream& err) {
+    bool json_output = std::find(args.begin(), args.end(), "--json") != args.end();
+    bool github_output = std::find(args.begin(), args.end(), "--github") != args.end();
+    if (json_output && github_output) {
+        err << "error: --json and --github cannot be used together\n";
+        return 2;
+    }
+    if (json_output) {
+        std::vector<std::string> plain_args;
+        for (const std::string& arg : args)
+            if (arg != "--json") plain_args.push_back(arg);
+        std::ostringstream plain_out, plain_err;
+        int code = diff_main(plain_args, plain_out, plain_err);
+        std::string output_json, error_json;
+        json_string(plain_out.str(), output_json);
+        json_string(plain_err.str(), error_json);
+        const char* status = code == 0 ? "identical" : code == 1 ? "different" : "error";
+        out << "{\"status\":\"" << status << "\",\"exitCode\":" << code
+            << ",\"output\":" << output_json << ",\"error\":" << error_json << "}\n";
+        return code;
+    }
+    if (github_output) {
+        std::vector<std::string> plain_args;
+        for (const std::string& arg : args)
+            if (arg != "--github") plain_args.push_back(arg);
+        std::ostringstream plain_out, plain_err;
+        int code = diff_main(plain_args, plain_out, plain_err);
+        auto annotations = [&](const std::string& text, const char* level) {
+            std::istringstream lines(text);
+            std::string line;
+            while (std::getline(lines, line))
+                out << "::" << level << " title=n+ diff::" << diff_github_escape(line) << "\n";
+        };
+        annotations(plain_out.str(), code == 2 ? "error" : "notice");
+        annotations(plain_err.str(), "error");
+        if (const char* summary_path = std::getenv("GITHUB_STEP_SUMMARY")) {
+            if (*summary_path) {
+                std::ofstream summary(summary_path, std::ios::app);
+                if (summary) {
+                    summary << "\n## n+ configuration diff\n\n<pre>\n";
+                    summary << diff_html_escape(plain_out.str().empty() ? plain_err.str() : plain_out.str());
+                    summary << "</pre>\n";
+                } else {
+                    err << "error: could not append GitHub step summary\n";
+                    return 2;
+                }
+            }
+        }
+        return code;
+    }
     std::vector<std::string> pos, ignore;
     std::string by, match;
+    bool match_k8s = false;
+    bool allow_ignored = false;
     for (size_t i = 0; i < args.size(); i++) {
-        if (args[i] == "--by" || args[i] == "--match" || args[i] == "--ignore") {
+        if (args[i] == "--match-k8s") {
+            match_k8s = true;
+        } else if (args[i] == "--allow-ignored") {
+            allow_ignored = true;
+        } else if (args[i] == "--by" || args[i] == "--match" || args[i] == "--ignore") {
             if (i + 1 >= args.size()) { err << "error: " << args[i] << " needs a value\n"; return 2; }
             if (args[i] == "--by") by = args[++i];
             else if (args[i] == "--match") match = args[++i];
@@ -301,58 +430,99 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
         }
     }
     bool one_file = !by.empty();
-    if ((!one_file && pos.size() != 2) || (one_file && pos.size() != 3) || (!match.empty() && one_file)) {
-        err << "usage: nero diff a.nero b.nero [--ignore PATH]\n"
-               "       nero diff a.nero b.nero --match PATH [--ignore PATH]\n"
-               "       nero diff file.nero --by PATH X Y [--ignore PATH]\n";
+    if ((!one_file && pos.size() != 2) || (one_file && pos.size() != 3) ||
+        ((!match.empty() || match_k8s) && (one_file || (match_k8s && !match.empty())))) {
+        err << "usage: nero diff a.nero b.nero [--ignore PATH] [--allow-ignored] [--json|--github]\n"
+               "       nero diff a.nero b.nero --match PATH [--ignore PATH] [--allow-ignored] [--json|--github]\n"
+               "       nero diff a.nero b.nero --match-k8s [--ignore PATH] [--allow-ignored] [--json|--github]\n"
+               "       nero diff file.nero --by PATH X Y [--ignore PATH] [--allow-ignored] [--json|--github]\n";
         return 2;
     }
+    if (allow_ignored && ignore.empty()) {
+        err << "error: --allow-ignored requires at least one --ignore PATH\n";
+        return 2;
+    }
+    std::vector<std::string> report_ignore;
+    if (one_file) report_ignore.push_back(by);
     if (one_file) ignore.push_back(by);
 
     try {
-        if (!match.empty()) {
-            std::vector<Value> docs_a = diff_collect(pos[0]);
-            std::vector<Value> docs_b = diff_collect(pos[1]);
+        std::vector<Value> auto_docs_a, auto_docs_b;
+        if (!one_file && match.empty() && !match_k8s) {
+            auto_docs_a = diff_collect(pos[0]);
+            auto_docs_b = diff_collect(pos[1]);
+            auto looks_kubernetes = [](const std::vector<Value>& docs) {
+                for (const Value& doc : docs)
+                    if (diff_field(doc, "apiVersion") && diff_field(doc, "kind")) return true;
+                return false;
+            };
+            match_k8s = looks_kubernetes(auto_docs_a) || looks_kubernetes(auto_docs_b);
+        }
+        if (!match.empty() || match_k8s) {
+            std::vector<Value> docs_a = auto_docs_a.empty() ? diff_collect(pos[0]) : std::move(auto_docs_a);
+            std::vector<Value> docs_b = auto_docs_b.empty() ? diff_collect(pos[1]) : std::move(auto_docs_b);
             std::map<std::string, size_t> left_ids, right_ids;
+            std::vector<std::string> left_ids_by_doc(docs_a.size()), right_ids_by_doc(docs_b.size());
             std::vector<std::string> left_shown(docs_a.size()), right_shown(docs_b.size());
+            std::vector<std::string> ignored_paths;
             for (size_t k = 0; k < docs_a.size(); k++) {
-                std::string id = diff_identity(docs_a[k], match, left_shown[k]);
+                std::string id = match_k8s
+                                     ? diff_kubernetes_identity(docs_a[k], left_shown[k])
+                                     : diff_identity(docs_a[k], match, left_shown[k]);
+                left_ids_by_doc[k] = id;
                 if (!left_ids.emplace(id, k).second)
-                    throw std::runtime_error("duplicate value for " + match + " in left file: " + left_shown[k]);
+                    throw std::runtime_error("duplicate " + (match_k8s ? std::string("resource identity") : "value for " + match) +
+                                             " in left file: " + left_shown[k]);
             }
             for (size_t k = 0; k < docs_b.size(); k++) {
-                std::string id = diff_identity(docs_b[k], match, right_shown[k]);
+                std::string id = match_k8s
+                                     ? diff_kubernetes_identity(docs_b[k], right_shown[k])
+                                     : diff_identity(docs_b[k], match, right_shown[k]);
+                right_ids_by_doc[k] = id;
                 if (!right_ids.emplace(id, k).second)
-                    throw std::runtime_error("duplicate value for " + match + " in right file: " + right_shown[k]);
+                    throw std::runtime_error("duplicate " + (match_k8s ? std::string("resource identity") : "value for " + match) +
+                                             " in right file: " + right_shown[k]);
             }
 
             size_t total = 0;
             for (size_t k = 0; k < docs_a.size(); k++) {
-                std::string id = diff_identity(docs_a[k], match, left_shown[k]);
-                auto found = right_ids.find(id);
+                auto found = right_ids.find(left_ids_by_doc[k]);
                 if (found == right_ids.end()) continue;
                 size_t other = found->second;
-                std::vector<Change> changes = diff_pair(docs_a[k], docs_b[other], ignore);
+                std::string report_prefix = diff_label(docs_a[k], k) + " (" +
+                                            (match_k8s ? left_shown[k] : match + "=" + left_shown[k]) + ").";
+                std::vector<Change> changes = diff_pair(docs_a[k], docs_b[other], ignore, &ignored_paths,
+                                                        &report_ignore, report_prefix);
                 if (changes.empty()) continue;
-                out << "@ " << diff_label(docs_a[k], k) << " (" << match << "=" << left_shown[k] << ")\n";
+                out << "@ " << diff_label(docs_a[k], k) << " ("
+                    << (match_k8s ? left_shown[k] : match + "=" + left_shown[k]) << ")\n";
                 diff_print(changes, out);
                 total += changes.size();
             }
             for (size_t k = 0; k < docs_a.size(); k++) {
-                std::string id = diff_identity(docs_a[k], match, left_shown[k]);
-                if (right_ids.count(id)) continue;
-                out << "- " << diff_label(docs_a[k], k) << " [" << match << "=" << left_shown[k] << "] (only on the left)\n";
+                if (right_ids.count(left_ids_by_doc[k])) continue;
+                out << "- " << diff_label(docs_a[k], k) << " ["
+                    << (match_k8s ? left_shown[k] : match + "=" + left_shown[k]) << "] (only on the left)\n";
                 total++;
             }
             for (size_t k = 0; k < docs_b.size(); k++) {
-                std::string id = diff_identity(docs_b[k], match, right_shown[k]);
-                if (left_ids.count(id)) continue;
-                out << "+ " << diff_label(docs_b[k], k) << " [" << match << "=" << right_shown[k] << "] (only on the right)\n";
+                if (left_ids.count(right_ids_by_doc[k])) continue;
+                out << "+ " << diff_label(docs_b[k], k) << " ["
+                    << (match_k8s ? right_shown[k] : match + "=" + right_shown[k]) << "] (only on the right)\n";
                 total++;
             }
-            if (total == 0) {
+            diff_print_ignored(ignored_paths, out);
+            if (total == 0 && ignored_paths.empty()) {
                 out << "no differences\n";
                 return 0;
+            }
+            if (total == 0 && allow_ignored) {
+                out << "no unignored differences\n";
+                return 0;
+            }
+            if (total == 0) {
+                out << "ignored changes require --allow-ignored to pass\n";
+                return 1;
             }
             out << total << (total == 1 ? " change\n" : " changes\n");
             return 1;
@@ -361,14 +531,15 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
         std::vector<const Value*> left, right;
         std::vector<Value> docs_a, docs_b;
         std::string head_suffix;
+        std::vector<std::string> ignored_paths;
         if (one_file) {
             docs_a = diff_collect(pos[0]);
             left = diff_select(docs_a, by, pos[1]);
             right = diff_select(docs_a, by, pos[2]);
             head_suffix = " (" + pos[1] + " -> " + pos[2] + ")";
         } else {
-            docs_a = diff_collect(pos[0]);
-            docs_b = diff_collect(pos[1]);
+            docs_a = auto_docs_a.empty() ? diff_collect(pos[0]) : std::move(auto_docs_a);
+            docs_b = auto_docs_b.empty() ? diff_collect(pos[1]) : std::move(auto_docs_b);
             for (const Value& d : docs_a) left.push_back(&d);
             for (const Value& d : docs_b) right.push_back(&d);
         }
@@ -377,7 +548,10 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
         bool headers = left.size() > 1 || right.size() > 1 || one_file;
         size_t common = std::min(left.size(), right.size());
         for (size_t k = 0; k < common; k++) {
-            std::vector<Change> changes = diff_pair(*left[k], *right[k], ignore);
+            std::string report_prefix = diff_label(*left[k], k) +
+                                        (one_file ? head_suffix : " [document " + std::to_string(k + 1) + "]") + ".";
+            std::vector<Change> changes = diff_pair(*left[k], *right[k], ignore, &ignored_paths,
+                                                    &report_ignore, report_prefix);
             if (changes.empty()) continue;
             if (headers) out << "@ " << diff_label(*left[k], k) << head_suffix << "\n";
             diff_print(changes, out);
@@ -386,9 +560,18 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
         for (size_t k = common; k < left.size(); k++, total++) out << "- " << diff_label(*left[k], k) << " (only on the left)\n";
         for (size_t k = common; k < right.size(); k++, total++) out << "+ " << diff_label(*right[k], k) << " (only on the right)\n";
 
-        if (total == 0) {
+        diff_print_ignored(ignored_paths, out);
+        if (total == 0 && ignored_paths.empty()) {
             out << "no differences\n";
             return 0;
+        }
+        if (total == 0 && allow_ignored) {
+            out << "no unignored differences\n";
+            return 0;
+        }
+        if (total == 0) {
+            out << "ignored changes require --allow-ignored to pass\n";
+            return 1;
         }
         out << total << (total == 1 ? " change\n" : " changes\n");
         return 1;

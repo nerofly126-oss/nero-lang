@@ -56,6 +56,7 @@ type Container {
     readinessProbe: Probe
     livenessProbe: Probe
     resources: Resources
+    securityContext: record = {}
     command: [str] = []
     args: [str] = []
 }
@@ -63,7 +64,7 @@ type Container {
 type PodSpec {
     containers: [Container]
     serviceAccountName: str = ""
-    automountServiceAccountToken: bool = true
+    automountServiceAccountToken: bool = false
     restartPolicy: str = "Always"
     terminationGracePeriodSeconds: int = 30
 }

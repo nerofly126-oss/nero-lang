@@ -107,6 +107,9 @@ int main() {
     assert(run("print {a: 1}\nemit {a: 1}", OutFormat::Yaml) == "{\"a\": 1}\na: 1\n");       // print is unchanged
     assert(run("emit {a: 1}", OutFormat::Json) == "{\n  \"a\": 1\n}\n");                      // JSON is still the default
     assert(run("for e in [\"a\", \"b\"] { emit {name: \"web-{e}\"} }", OutFormat::Yaml) == "name: web-a\n---\nname: web-b\n");
+    assert(run("emit {valueFrom: secret(\"db\", \"password\")}", OutFormat::Yaml) ==
+           "valueFrom:\n  secretKeyRef:\n    name: db\n    key: password\n");
+    assert(run("emit {password: secret(\"DB_PASSWORD\")}", OutFormat::Yaml) == "password:\n  secretRef: DB_PASSWORD\n");
 
     // keywords work as field names
     assert(ast("type S { type: str, in: int }") == "type S\n  type: str\n  in: int\n");

@@ -81,6 +81,8 @@ int main() {
     assert(d("emit {p: secret(\"A\")}", "emit {p: secret(\"A\")}") == "");
     assert(d("emit {p: secret(\"A\")}", "emit {p: secret(\"B\")}") == "~ p: secret(A) -> secret(B)\n");
     assert(d("emit {p: secret(\"A\")}", "emit {p: \"A\"}") == "~ p: secret(A) -> \"A\"\n");
+    assert(d("emit {p: secret(\"db\", \"password\")}", "emit {p: secret(\"db\", \"token\")}") ==
+           "~ p: secret(db, password) -> secret(db, token)\n");
 
     // ---- schema values diff like records ----
     assert(d("type P {\n  n: int\n  s: str = \"x\"\n}\nemit P { n: 1 }", "type P {\n  n: int\n  s: str = \"x\"\n}\nemit P { n: 2 }") == "~ n: 1 -> 2\n");
@@ -109,6 +111,26 @@ int main() {
     put("single_b.nero", "emit {a: 2}\n");
     r = run_diff({P("single_a.nero"), P("single_b.nero")});
     assert(r.out == "~ a: 1 -> 2\n1 change\n");                                              // no header when there is one document each
+    put("ignored_left.nero", "emit {kind: \"Deployment\", spec: {replicas: 2}}\n");
+    put("ignored_right.nero", "emit {kind: \"Deployment\", spec: {replicas: 5}}\n");
+    r = run_diff({P("ignored_left.nero"), P("ignored_right.nero"), "--ignore", "spec.replicas"});
+    assert(r.code == 1 && r.out == "! ignored change at Deployment [document 1].spec.replicas\n"
+                                  "ignored changes require --allow-ignored to pass\n");
+    r = run_diff({P("ignored_left.nero"), P("ignored_right.nero"), "--ignore", "spec.replicas", "--allow-ignored"});
+    assert(r.code == 0 && r.out == "! ignored change at Deployment [document 1].spec.replicas\nno unignored differences\n");
+    r = run_diff({P("ignored_left.nero"), P("ignored_right.nero"), "--allow-ignored"});
+    assert(r.code == 2 && r.err.find("--allow-ignored requires at least one --ignore PATH") != std::string::npos);
+    r = run_diff({P("single_a.nero"), P("single_b.nero"), "--json"});
+    assert(r.code == 1 && r.err.empty());
+    assert(r.out.find("\"status\":\"different\"") != std::string::npos);
+    assert(r.out.find("\"exitCode\":1") != std::string::npos);
+    assert(r.out.find("~ a: 1 -> 2\\n1 change\\n") != std::string::npos);
+    r = run_diff({P("single_a.nero"), P("single_b.nero"), "--github"});
+    assert(r.code == 1 && r.out == "::notice title=n+ diff::~ a%3A 1 -> 2\n::notice title=n+ diff::1 change\n");
+    assert(run_diff({P("single_a.nero"), P("single_b.nero"), "--github", "--json"}).code == 2);
+    r = run_diff({P("missing.nero"), P("single_a.nero"), "--json"});
+    assert(r.code == 2 && r.err.empty() && r.out.find("\"status\":\"error\"") != std::string::npos);
+    assert(r.out.find("cannot open") != std::string::npos);
     put("match_left.nero",
         "emit {kind: \"ConfigMap\", metadata: {name: \"settings\"}, data: {mode: \"dev\"}}\n"
         "emit {kind: \"Service\", metadata: {name: \"web\"}, port: 80}\n");
@@ -120,6 +142,34 @@ int main() {
     assert(r.code == 1);
     assert(r.out == "@ Service (metadata.name=\"web\")\n~ port: 80 -> 8080\n"
                     "+ Deployment [metadata.name=\"worker\"] (only on the right)\n2 changes\n");
+    put("k8s_match_left.nero",
+        "emit {apiVersion: \"v1\", kind: \"Service\", metadata: {name: \"web\", namespace: \"blue\"}, port: 80}\n"
+        "emit {apiVersion: \"apps/v1\", kind: \"Deployment\", metadata: {name: \"web\", namespace: \"blue\"}, replicas: 2}\n");
+    put("k8s_match_right.nero",
+        "emit {apiVersion: \"apps/v1\", kind: \"Deployment\", metadata: {name: \"web\", namespace: \"blue\"}, replicas: 4}\n"
+        "emit {apiVersion: \"v1\", kind: \"Service\", metadata: {name: \"web\", namespace: \"green\"}, port: 80}\n");
+    r = run_diff({P("k8s_match_left.nero"), P("k8s_match_right.nero"), "--match-k8s"});
+    assert(r.code == 1);
+    assert(r.out == "@ Deployment (apiVersion=\"apps/v1\", kind=\"Deployment\", namespace=\"blue\", name=\"web\")\n"
+                    "~ replicas: 2 -> 4\n"
+                    "- Service [apiVersion=\"v1\", kind=\"Service\", namespace=\"blue\", name=\"web\"] (only on the left)\n"
+                    "+ Service [apiVersion=\"v1\", kind=\"Service\", namespace=\"green\", name=\"web\"] (only on the right)\n3 changes\n");
+    r = run_diff({P("k8s_match_left.nero"), P("k8s_match_right.nero")});
+    assert(r.code == 1 && r.out == "@ Deployment (apiVersion=\"apps/v1\", kind=\"Deployment\", namespace=\"blue\", name=\"web\")\n"
+                                    "~ replicas: 2 -> 4\n"
+                                    "- Service [apiVersion=\"v1\", kind=\"Service\", namespace=\"blue\", name=\"web\"] (only on the left)\n"
+                                    "+ Service [apiVersion=\"v1\", kind=\"Service\", namespace=\"green\", name=\"web\"] (only on the right)\n3 changes\n");
+    put("k8s_match_bad.nero", "emit {kind: \"Service\", metadata: {name: \"web\"}}\n");
+    r = run_diff({P("k8s_match_bad.nero"), P("k8s_match_right.nero"), "--match-k8s"});
+    assert(r.code == 2 && r.err.find("Kubernetes identity requires string apiVersion, kind and metadata.name") != std::string::npos);
+    put("k8s_match_unset.nero", "emit {apiVersion: \"v1\", kind: \"Service\", metadata: {name: \"web\"}}\n");
+    r = run_diff({P("k8s_match_unset.nero"), P("k8s_match_unset.nero"), "--match-k8s"});
+    assert(r.code == 0 && r.out == "no differences\n");
+    put("k8s_match_empty.nero",
+        "emit {apiVersion: \"v1\", kind: \"Service\", metadata: {name: \"web\", namespace: \"\"}}\n");
+    r = run_diff({P("k8s_match_unset.nero"), P("k8s_match_empty.nero")});
+    assert(r.code == 1 && r.out.find("only on the left") != std::string::npos &&
+           r.out.find("only on the right") != std::string::npos);
     put("match_duplicate.nero", "emit {metadata: {name: \"same\"}}\nemit {metadata: {name: \"same\"}}\n");
     r = run_diff({P("match_duplicate.nero"), P("match_left.nero"), "--match", "metadata.name"});
     assert(r.code == 2 && r.err.find("duplicate value for metadata.name in left file") != std::string::npos);
@@ -141,7 +191,9 @@ int main() {
     r = run_diff({P("envs.nero"), "--by", "metadata.name", "web-prod", "web-prod"});
     assert(r.code == 0);
     r = run_diff({P("envs.nero"), "--by", "metadata.name", "web-staging", "web-prod", "--ignore", "spec"});
-    assert(r.code == 0);
+    assert(r.code == 1 && r.out.find("! ignored change at Deployment (web-staging -> web-prod).spec.replicas") != std::string::npos);
+    r = run_diff({P("envs.nero"), "--by", "metadata.name", "web-staging", "web-prod", "--ignore", "spec", "--allow-ignored"});
+    assert(r.code == 0 && r.out.find("no unignored differences") != std::string::npos);
     r = run_diff({P("envs.nero"), "--by", "metadata.name", "web-qa", "web-prod"});
     assert(r.code == 2 && r.err == "error: no document has metadata.name equal to \"web-qa\" (found: web-staging, web-prod)\n");
     r = run_diff({P("envs.nero"), "--by", "nothing.here", "a", "b"});
