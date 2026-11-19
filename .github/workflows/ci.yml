@@ -17,6 +17,9 @@ jobs:
       - name: Build nero
         run: c++ -std=c++20 -O2 -Wall -Wextra -o nero src/main.cpp
 
+      - name: Install Kubernetes schema validator
+        run: python3 -m pip install --disable-pip-version-check kubernetes-validate==1.37.0
+
       - name: Install kubectl and kind
         run: |
           mkdir -p "$RUNNER_TEMP/k8s-tools"
@@ -35,7 +38,10 @@ jobs:
         run: |
           ./nero check examples/k8s.nero
           ./nero policy examples/k8s.nero
-          ./nero eval examples/k8s.nero --yaml | kubectl --context kind-nero-ci apply --dry-run=server --validate=strict -f -
+          ./nero policy examples/k8s.nero --rules examples/policy_rules.nero
+          ./nero eval examples/k8s.nero --yaml > /tmp/nero-manifests.yaml
+          python3 tools/k8s_validate.py --version 1.37 /tmp/nero-manifests.yaml
+          kubectl --context kind-nero-ci apply --dry-run=server --validate=strict -f /tmp/nero-manifests.yaml
 
       - name: Confirm Kubernetes rejects an invalid manifest
         run: |

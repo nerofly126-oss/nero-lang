@@ -27,12 +27,66 @@ struct Change {
     char kind = '~';          // '~' changed, '+' added, '-' removed
     std::string path;
     std::string before, after;
+    std::string before_json, after_json;
+    std::string document;
+    std::string identity;
 };
 
 inline std::string diff_show(const Value& v) {
     if (v.kind == Value::Secret)
         return v.secret_key.empty() ? "secret(" + v.s + ")" : "secret(" + v.s + ", " + v.secret_key + ")";
     return to_json(v, false);
+}
+
+inline Change diff_change(char kind, const std::string& path, const Value* before, const Value* after) {
+    Change change;
+    change.kind = kind;
+    change.path = path;
+    if (before) {
+        change.before = diff_show(*before);
+        change.before_json = to_json(*before, false);
+    }
+    if (after) {
+        change.after = diff_show(*after);
+        change.after_json = to_json(*after, false);
+    }
+    return change;
+}
+
+inline std::string diff_json_value(const std::string& value, bool present) {
+    return present ? value : "null";
+}
+
+inline std::string diff_json_changes(const std::vector<Change>& changes) {
+    std::string json = "[";
+    for (size_t i = 0; i < changes.size(); i++) {
+        if (i) json += ",";
+        const Change& change = changes[i];
+        std::string kind(1, change.kind);
+        json += "{\"type\":";
+        json_string(kind, json);
+        json += ",\"path\":";
+        json_string(change.path, json);
+        json += ",\"before\":" + diff_json_value(change.before_json, change.kind != '+');
+        json += ",\"after\":" + diff_json_value(change.after_json, change.kind != '-');
+        json += ",\"document\":";
+        if (change.document.empty()) json += "null";
+        else json_string(change.document, json);
+        json += ",\"identity\":";
+        if (change.identity.empty()) json += "null";
+        else json_string(change.identity, json);
+        json += "}";
+    }
+    return json + "]";
+}
+
+inline std::string diff_json_strings(const std::vector<std::string>& values) {
+    std::string json = "[";
+    for (size_t i = 0; i < values.size(); i++) {
+        if (i) json += ",";
+        json_string(values[i], json);
+    }
+    return json + "]";
 }
 
 inline const Value* diff_field(const Value& rec, const std::string& key) {
@@ -86,37 +140,38 @@ inline bool diff_equal(const Value& a, const Value& b) {
     return true;
 }
 
-inline void diff_into(const Value& a, const Value& b, const std::string& path, std::vector<Change>& out) {
+inline void diff_into(const Value& a, const Value& b, const std::string& path, std::vector<Change>& out,
+                      bool list_position = false) {
     if (a.kind == Value::Record && b.kind == Value::Record) {
         for (size_t k = 0; k < a.keys.size(); k++) {
             const Value* other = diff_field(b, a.keys[k]);
             std::string p = diff_key(path, a.keys[k]);
-            if (other) diff_into(a.items[k], *other, p, out);
-            else out.push_back({'-', p, diff_show(a.items[k]), ""});
+            if (other) diff_into(a.items[k], *other, p, out, list_position);
+            else out.push_back(diff_change('-', p, &a.items[k], nullptr));
         }
         for (size_t k = 0; k < b.keys.size(); k++)
-            if (!diff_field(a, b.keys[k])) out.push_back({'+', diff_key(path, b.keys[k]), "", diff_show(b.items[k])});
+            if (!diff_field(a, b.keys[k])) out.push_back(diff_change('+', diff_key(path, b.keys[k]), nullptr, &b.items[k]));
         return;
     }
     if (a.kind == Value::List && b.kind == Value::List) {
-        if (diff_named(a) && diff_named(b)) {
+        if (!list_position && diff_named(a) && diff_named(b)) {
             auto label = [&](const Value& item) { return path + "[name=" + diff_field(item, "name")->s + "]"; };
             for (const Value& item : a.items) {
                 const Value* match = nullptr;
                 for (const Value& cand : b.items)
                     if (diff_field(cand, "name")->s == diff_field(item, "name")->s) match = &cand;
-                if (match) diff_into(item, *match, label(item), out);
-                else out.push_back({'-', label(item), diff_show(item), ""});
+                if (match) diff_into(item, *match, label(item), out, list_position);
+                else out.push_back(diff_change('-', label(item), &item, nullptr));
             }
             for (const Value& item : b.items) {
                 bool found = false;
                 for (const Value& cand : a.items)
                     if (diff_field(cand, "name")->s == diff_field(item, "name")->s) found = true;
-                if (!found) out.push_back({'+', label(item), "", diff_show(item)});
+                if (!found) out.push_back(diff_change('+', label(item), nullptr, &item));
             }
             return;
         }
-        if (a.items.size() <= 256 && b.items.size() <= 256) {
+        if (!list_position && a.items.size() <= 256 && b.items.size() <= 256) {
             size_t rows = a.items.size() + 1, cols = b.items.size() + 1;
             std::vector<size_t> lcs(rows * cols, 0);
             auto cell = [&](size_t i, size_t j) -> size_t& { return lcs[i * cols + j]; };
@@ -142,15 +197,15 @@ inline void diff_into(const Value& a, const Value& b, const std::string& path, s
                 size_t common = std::min(left_end - left, right_end - right);
                 for (size_t k = 0; k < common; k++)
                     diff_into(a.items[left + k], b.items[right + k],
-                              path + "[" + std::to_string(left + k) + "]", out);
+                              path + "[" + std::to_string(left + k) + "]", out, list_position);
                 left += common;
                 right += common;
                 while (left < left_end) {
-                    out.push_back({'-', path + "[" + std::to_string(left) + "]", diff_show(a.items[left]), ""});
+                    out.push_back(diff_change('-', path + "[" + std::to_string(left) + "]", &a.items[left], nullptr));
                     left++;
                 }
                 while (right < right_end) {
-                    out.push_back({'+', path + "[" + std::to_string(right) + "]", "", diff_show(b.items[right])});
+                    out.push_back(diff_change('+', path + "[" + std::to_string(right) + "]", nullptr, &b.items[right]));
                     right++;
                 }
             };
@@ -165,15 +220,15 @@ inline void diff_into(const Value& a, const Value& b, const std::string& path, s
         } else {
             size_t common = std::min(a.items.size(), b.items.size());
             for (size_t k = 0; k < common; k++)
-                diff_into(a.items[k], b.items[k], path + "[" + std::to_string(k) + "]", out);
+                diff_into(a.items[k], b.items[k], path + "[" + std::to_string(k) + "]", out, list_position);
             for (size_t k = common; k < a.items.size(); k++)
-                out.push_back({'-', path + "[" + std::to_string(k) + "]", diff_show(a.items[k]), ""});
+                out.push_back(diff_change('-', path + "[" + std::to_string(k) + "]", &a.items[k], nullptr));
             for (size_t k = common; k < b.items.size(); k++)
-                out.push_back({'+', path + "[" + std::to_string(k) + "]", "", diff_show(b.items[k])});
+                out.push_back(diff_change('+', path + "[" + std::to_string(k) + "]", nullptr, &b.items[k]));
         }
         return;
     }
-    if (!diff_same_scalar(a, b)) out.push_back({'~', path, diff_show(a), diff_show(b)});
+    if (!diff_same_scalar(a, b)) out.push_back(diff_change('~', path, &a, &b));
 }
 
 inline bool diff_hidden(const std::string& path, const std::vector<std::string>& ignore) {
@@ -303,9 +358,9 @@ inline std::vector<const Value*> diff_select(const std::vector<Value>& docs, con
 inline std::vector<Change> diff_pair(const Value& a, const Value& b, const std::vector<std::string>& ignore,
                                     std::vector<std::string>* ignored_paths = nullptr,
                                     const std::vector<std::string>* report_ignore = nullptr,
-                                    const std::string& report_prefix = "") {
+                                    const std::string& report_prefix = "", bool list_position = false) {
     std::vector<Change> all, keep;
-    diff_into(a, b, "", all);
+    diff_into(a, b, "", all, list_position);
     for (Change& c : all) {
         if (diff_hidden(c.path, ignore)) {
             bool report = !report_ignore || !diff_hidden(c.path, *report_ignore);
@@ -358,7 +413,9 @@ inline std::string diff_html_escape(const std::string& value) {
     return out;
 }
 
-inline int diff_main(const std::vector<std::string>& args, std::ostream& out, std::ostream& err) {
+inline int diff_main(const std::vector<std::string>& args, std::ostream& out, std::ostream& err,
+                     std::vector<Change>* structured = nullptr,
+                     std::vector<std::string>* ignored_structured = nullptr) {
     bool json_output = std::find(args.begin(), args.end(), "--json") != args.end();
     bool github_output = std::find(args.begin(), args.end(), "--github") != args.end();
     if (json_output && github_output) {
@@ -370,12 +427,16 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
         for (const std::string& arg : args)
             if (arg != "--json") plain_args.push_back(arg);
         std::ostringstream plain_out, plain_err;
-        int code = diff_main(plain_args, plain_out, plain_err);
+        std::vector<Change> changes;
+        std::vector<std::string> ignored_paths;
+        int code = diff_main(plain_args, plain_out, plain_err, &changes, &ignored_paths);
         std::string output_json, error_json;
         json_string(plain_out.str(), output_json);
         json_string(plain_err.str(), error_json);
         const char* status = code == 0 ? "identical" : code == 1 ? "different" : "error";
         out << "{\"status\":\"" << status << "\",\"exitCode\":" << code
+            << ",\"changes\":" << diff_json_changes(changes)
+            << ",\"ignoredPaths\":" << diff_json_strings(ignored_paths)
             << ",\"output\":" << output_json << ",\"error\":" << error_json << "}\n";
         return code;
     }
@@ -412,11 +473,14 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
     std::string by, match;
     bool match_k8s = false;
     bool allow_ignored = false;
+    bool list_position = false;
     for (size_t i = 0; i < args.size(); i++) {
         if (args[i] == "--match-k8s") {
             match_k8s = true;
         } else if (args[i] == "--allow-ignored") {
             allow_ignored = true;
+        } else if (args[i] == "--list-position") {
+            list_position = true;
         } else if (args[i] == "--by" || args[i] == "--match" || args[i] == "--ignore") {
             if (i + 1 >= args.size()) { err << "error: " << args[i] << " needs a value\n"; return 2; }
             if (args[i] == "--by") by = args[++i];
@@ -432,10 +496,10 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
     bool one_file = !by.empty();
     if ((!one_file && pos.size() != 2) || (one_file && pos.size() != 3) ||
         ((!match.empty() || match_k8s) && (one_file || (match_k8s && !match.empty())))) {
-        err << "usage: nero diff a.nero b.nero [--ignore PATH] [--allow-ignored] [--json|--github]\n"
-               "       nero diff a.nero b.nero --match PATH [--ignore PATH] [--allow-ignored] [--json|--github]\n"
-               "       nero diff a.nero b.nero --match-k8s [--ignore PATH] [--allow-ignored] [--json|--github]\n"
-               "       nero diff file.nero --by PATH X Y [--ignore PATH] [--allow-ignored] [--json|--github]\n";
+        err << "usage: nero diff a.nero b.nero [--ignore PATH] [--allow-ignored] [--list-position] [--json|--github]\n"
+               "       nero diff a.nero b.nero --match PATH [--ignore PATH] [--allow-ignored] [--list-position] [--json|--github]\n"
+               "       nero diff a.nero b.nero --match-k8s [--ignore PATH] [--allow-ignored] [--list-position] [--json|--github]\n"
+               "       nero diff file.nero --by PATH X Y [--ignore PATH] [--allow-ignored] [--list-position] [--json|--github]\n";
         return 2;
     }
     if (allow_ignored && ignore.empty()) {
@@ -492,7 +556,12 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
                 std::string report_prefix = diff_label(docs_a[k], k) + " (" +
                                             (match_k8s ? left_shown[k] : match + "=" + left_shown[k]) + ").";
                 std::vector<Change> changes = diff_pair(docs_a[k], docs_b[other], ignore, &ignored_paths,
-                                                        &report_ignore, report_prefix);
+                                                        &report_ignore, report_prefix, list_position);
+                for (Change& change : changes) {
+                    change.document = diff_label(docs_a[k], k);
+                    change.identity = match_k8s ? left_shown[k] : match + "=" + left_shown[k];
+                    if (structured) structured->push_back(change);
+                }
                 if (changes.empty()) continue;
                 out << "@ " << diff_label(docs_a[k], k) << " ("
                     << (match_k8s ? left_shown[k] : match + "=" + left_shown[k]) << ")\n";
@@ -501,17 +570,31 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
             }
             for (size_t k = 0; k < docs_a.size(); k++) {
                 if (right_ids.count(left_ids_by_doc[k])) continue;
+                if (structured) {
+                    Change change = diff_change('-', "", &docs_a[k], nullptr);
+                    change.document = diff_label(docs_a[k], k);
+                    change.identity = match_k8s ? left_shown[k] : match + "=" + left_shown[k];
+                    structured->push_back(change);
+                }
                 out << "- " << diff_label(docs_a[k], k) << " ["
                     << (match_k8s ? left_shown[k] : match + "=" + left_shown[k]) << "] (only on the left)\n";
                 total++;
             }
             for (size_t k = 0; k < docs_b.size(); k++) {
                 if (left_ids.count(right_ids_by_doc[k])) continue;
+                if (structured) {
+                    Change change = diff_change('+', "", nullptr, &docs_b[k]);
+                    change.document = diff_label(docs_b[k], k);
+                    change.identity = match_k8s ? right_shown[k] : match + "=" + right_shown[k];
+                    structured->push_back(change);
+                }
                 out << "+ " << diff_label(docs_b[k], k) << " ["
                     << (match_k8s ? right_shown[k] : match + "=" + right_shown[k]) << "] (only on the right)\n";
                 total++;
             }
             diff_print_ignored(ignored_paths, out);
+            if (ignored_structured)
+                ignored_structured->insert(ignored_structured->end(), ignored_paths.begin(), ignored_paths.end());
             if (total == 0 && ignored_paths.empty()) {
                 out << "no differences\n";
                 return 0;
@@ -551,16 +634,40 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
             std::string report_prefix = diff_label(*left[k], k) +
                                         (one_file ? head_suffix : " [document " + std::to_string(k + 1) + "]") + ".";
             std::vector<Change> changes = diff_pair(*left[k], *right[k], ignore, &ignored_paths,
-                                                    &report_ignore, report_prefix);
+                                                    &report_ignore, report_prefix, list_position);
+            for (Change& change : changes) {
+                change.document = diff_label(*left[k], k);
+                if (one_file) change.identity = pos[1] + " -> " + pos[2];
+                else change.identity = "document " + std::to_string(k + 1);
+                if (structured) structured->push_back(change);
+            }
             if (changes.empty()) continue;
             if (headers) out << "@ " << diff_label(*left[k], k) << head_suffix << "\n";
             diff_print(changes, out);
             total += changes.size();
         }
-        for (size_t k = common; k < left.size(); k++, total++) out << "- " << diff_label(*left[k], k) << " (only on the left)\n";
-        for (size_t k = common; k < right.size(); k++, total++) out << "+ " << diff_label(*right[k], k) << " (only on the right)\n";
+        for (size_t k = common; k < left.size(); k++, total++) {
+            if (structured) {
+                Change change = diff_change('-', "", left[k], nullptr);
+                change.document = diff_label(*left[k], k);
+                change.identity = "document " + std::to_string(k + 1);
+                structured->push_back(change);
+            }
+            out << "- " << diff_label(*left[k], k) << " (only on the left)\n";
+        }
+        for (size_t k = common; k < right.size(); k++, total++) {
+            if (structured) {
+                Change change = diff_change('+', "", nullptr, right[k]);
+                change.document = diff_label(*right[k], k);
+                change.identity = "document " + std::to_string(k + 1);
+                structured->push_back(change);
+            }
+            out << "+ " << diff_label(*right[k], k) << " (only on the right)\n";
+        }
 
         diff_print_ignored(ignored_paths, out);
+        if (ignored_structured)
+            ignored_structured->insert(ignored_structured->end(), ignored_paths.begin(), ignored_paths.end());
         if (total == 0 && ignored_paths.empty()) {
             out << "no differences\n";
             return 0;

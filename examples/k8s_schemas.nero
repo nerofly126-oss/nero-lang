@@ -57,6 +57,7 @@ type Container {
     livenessProbe: Probe
     resources: Resources
     securityContext: record = {}
+    volumeMounts: [record] = []
     command: [str] = []
     args: [str] = []
 }
@@ -67,6 +68,14 @@ type PodSpec {
     automountServiceAccountToken: bool = false
     restartPolicy: str = "Always"
     terminationGracePeriodSeconds: int = 30
+    dnsPolicy: str = "ClusterFirst"
+    enableServiceLinks: bool = true
+    imagePullSecrets: [record] = []
+    initContainers: [Container] = []
+    nodeSelector: record = {}
+    securityContext: record = {}
+    tolerations: [record] = []
+    volumes: [record] = []
 }
 
 type PodTemplate {
@@ -83,6 +92,9 @@ type DeploymentSpec {
     selector: LabelSelector
     template: PodTemplate
     strategy: record = {}
+    minReadySeconds: int = 0
+    progressDeadlineSeconds: int = 600
+    revisionHistoryLimit: int = 10
 }
 
 type Deployment {

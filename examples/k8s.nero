@@ -8,7 +8,7 @@
 import "k8s_schemas.nero"
 
 fn labels(app: str, env: str) -> record {
-    return {app: app, env: env}
+    return {app: app, env: env, team: "platform"}
 }
 
 fn replicas_for(env: str) -> int {

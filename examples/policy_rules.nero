@@ -1,0 +1,19 @@
+# Custom policy rules for the Kubernetes demo.
+# Run with: ./nero policy examples/k8s.nero --rules examples/policy_rules.nero
+
+emit {
+    id: "ORG001",
+    kind: "Deployment",
+    path: "metadata.labels.team",
+    op: "exists",
+    message: "Deployment must declare its owning team",
+}
+
+emit {
+    id: "ORG002",
+    kind: "Deployment",
+    path: "spec.replicas",
+    op: "notEquals",
+    value: 0,
+    message: "Deployment must run at least one replica",
+}

@@ -66,14 +66,29 @@ error: examples/check_demo.nero:14:35: Port has no field 'protocl' (did you mean
 
 ### policy: review emitted Kubernetes resources
 
-`policy` evaluates emitted resources and checks a small built-in security baseline:
+`policy` evaluates emitted resources and checks a built-in security baseline:
 
 ```
 $ ./nero policy examples/k8s.nero
 ok: Kubernetes policy checks passed for 6 documents
 ```
 
-It flags untagged or `latest` images, privileged containers, privilege escalation, root execution, missing non-root settings, missing CPU or memory limits, enabled service-account token mounting, and externally exposed Services. These checks are a review aid; they do not replace Kubernetes schema or admission-policy validation. Unknown resource kinds are reported because n+ cannot inspect them.
+It flags untagged or `latest` images, privileged containers, privilege escalation, root execution, missing non-root settings, missing CPU or memory limits, enabled service-account token mounting, and externally exposed Services. Select built-in rules with repeatable `--disable RULE` or `--only RULE` options, using IDs such as `K8S301`; an unknown ID is an error. Add organization-specific rules in an n+ file and pass it with `--rules`:
+
+```
+$ ./nero policy examples/k8s.nero --rules examples/policy_rules.nero
+ok: Kubernetes policy checks passed for 6 documents
+```
+
+These checks are a review aid; they do not replace Kubernetes schema or admission-policy validation. Unknown resource kinds are reported because n+ cannot inspect them.
+
+For versioned upstream Kubernetes schemas, install the validator and validate any generated manifest:
+
+```
+$ python3 -m pip install kubernetes-validate==1.37.0
+$ ./nero eval examples/k8s.nero --yaml | python3 tools/k8s_validate.py --version 1.37
+validated 6 Kubernetes documents against version 1.37 schemas
+```
 
 ### diff: what changes between environments
 
@@ -93,7 +108,7 @@ $ ./nero diff examples/k8s.nero --by metadata.name web-staging web-prod
 7 changes
 ```
 
-Lists of records that all have a unique `name` (containers, env vars) are matched by name, so reordering them is not a change. `--ignore PATH` hides a field and everything under it, but reports when it suppressed a change and fails the diff unless you also pass `--allow-ignored`. For two files, Kubernetes resources are paired by API identity automatically; generic documents are paired by position. The exit code is 0 for identical, 1 for different or suppressed changes, and 2 for trouble.
+Lists of records that all have a unique `name` (containers, env vars) are matched by name, so reordering them is not a change. `--list-position` compares all lists by index when position carries meaning. `--ignore PATH` hides a field and everything under it, but reports when it suppressed a change and fails the diff unless you also pass `--allow-ignored`. For two files, Kubernetes resources are paired by API identity automatically; generic documents are paired by position. The exit code is 0 for identical, 1 for different or suppressed changes, and 2 for trouble.
 
 For non-Kubernetes documents, pair them by a field that is unique in each file instead of relying on emission order:
 
@@ -195,12 +210,13 @@ password: secret("DB_PASSWORD_{stage}")         # a reference, never a value
 nero file.nero                    compiled backend: ints and strings only, runs as machine code
 nero eval file.nero [--yaml]      the full language, prints JSON or YAML
 nero check file.nero              static pass over everything, exit 1 on problems
-nero policy file.nero             review emitted Kubernetes resources
+nero policy file.nero [--rules RULES.nero] [--disable RULE]... [--only RULE]...   review Kubernetes resources
 nero diff a.nero b.nero           what changes between two files
 nero diff a.nero b.nero --match PATH   pair documents by a unique field
 nero diff a.nero b.nero --match-k8s    pair Kubernetes resources by API identity
-nero diff a.nero b.nero --json         structured status and transcript for scripts
+nero diff a.nero b.nero --json         structured changes and transcript for scripts
 nero diff a.nero b.nero --github       GitHub Actions annotations and step summary
+nero diff a.nero b.nero --list-position compare every list by index
 nero diff a.nero b.nero --ignore PATH --allow-ignored   explicitly permit ignored changes
 nero diff f.nero --by PATH X Y    what changes between two documents of one file
 nero --tokens | --ast file.nero   look at the lexer and parser output
@@ -245,21 +261,23 @@ src/policy.hpp     Kubernetes resource policy checks
 ## What has and has not been verified
 
 - The YAML output parses back (PyYAML) to the same data as the JSON output for every evaluating example, plus a file of 68 awkward strings and keys.
-- CI uses `kubernetes-validate` 1.37.0 to validate the six generated manifests (three Deployments, three Services) against Kubernetes 1.28, 1.30 and 1.33 schemas in strict mode. It also checks that schema validation rejects `replicas: "3"`.
+- CI uses `kubernetes-validate` 1.37.0 to validate the six generated manifests (three Deployments, three Services) against Kubernetes 1.28, 1.30, 1.33, 1.35 and 1.37 schemas in strict mode. It also checks that schema validation rejects `replicas: "3"`.
 - CI sends the generated documents to a disposable Kubernetes API server with `kubectl apply --dry-run=server --validate=strict`, then applies them and verifies the dev deployment responds over HTTP.
 - CI runs `nero policy` on the demo before schema and API-server validation.
 - `check` examines uncalled functions and unreachable branches too. It reports statically provable errors such as constant overflow or division by zero even when that branch would not run.
 
 ## Known gaps
 
-- The bundled Kubernetes schemas cover the demo and common core options such as metadata annotations, container commands and arguments, pod restart settings, and probe timing. They are not complete Kubernetes API schemas.
+- The n+ schemas in `examples/k8s_schemas.nero` cover the demo and common core options; they are not complete Kubernetes API schemas. `tools/k8s_validate.py` checks generated YAML against upstream versioned Kubernetes schemas.
 - `policy` checks a defined set of workload and Service fields. It is not a complete security policy engine and reports resource kinds it cannot inspect.
 - `secret(name, key)` emits the Kubernetes Secret reference shape but does not check cluster Secret existence, key presence, or permissions.
 - There is no in-place assignment into lists or records. Lists can be extended with `+` or rebuilt with comprehensions; records are built with literals.
 - Scope is flat per function. Functions can read and update top-level variables, but their local variables remain separate.
 - YAML output has no comments or anchors. Multiline strings use literal block scalars; unusual single-line strings are double quoted.
 - `check` catches constant integer overflow, division by zero, and out-of-range indexes in literal lists. It cannot prove runtime-dependent overflow, recursion depth, or indexes safe.
-- `diff` aligns unchanged items in unnamed lists up to 256 items per side, then compares remaining items in order; larger lists use positional comparison. `--by` pairs documents in the order they were emitted.
+- `diff` aligns unchanged items in unnamed lists up to 256 items per side, then compares remaining items in order; equally good alignments resolve toward the earlier left-side item. Larger lists use positional comparison. Unnamed list insertions near modifications can be ambiguous; use stable `name` fields or `--list-position` when order is the intended identity. `--by` pairs documents in the order they were emitted.
+- `diff --json` includes typed per-change `before` and `after` values plus document and identity labels where available, and reports suppressed paths in `ignoredPaths`.
+- Custom `.nero` policy rules support field presence, typed equality/inequality and substring or list containment; arbitrary expressions and cluster-aware checks still require a separate policy engine or admission control.
 - The evaluator is a tree walker, roughly two orders of magnitude slower than the compiled backend on a recursive `fib`. That is fine for config and not fine for anything else.
 
 ## Why the compiler is still here

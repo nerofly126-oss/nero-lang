@@ -9,19 +9,19 @@ nero file.nero                    run with the compiled backend (a subset, see t
 nero run file.nero                the same
 nero eval file.nero [--json|--yaml]   run with the evaluator: the full language. JSON is the default.
 nero check file.nero              static pass over everything, called or not
-nero policy file.nero             review emitted Kubernetes resources
-nero diff a.nero b.nero [--ignore PATH] [--allow-ignored]
+nero policy file.nero [--rules RULES.nero] [--disable RULE]... [--only RULE]...   review Kubernetes resources
+nero diff a.nero b.nero [--ignore PATH] [--allow-ignored] [--list-position]
 nero diff a.nero b.nero --json
 nero diff a.nero b.nero --github
-nero diff a.nero b.nero --match PATH [--ignore PATH] [--allow-ignored]
-nero diff a.nero b.nero --match-k8s [--ignore PATH] [--allow-ignored]
-nero diff file.nero --by PATH X Y [--ignore PATH] [--allow-ignored]
+nero diff a.nero b.nero --match PATH [--ignore PATH] [--allow-ignored] [--list-position]
+nero diff a.nero b.nero --match-k8s [--ignore PATH] [--allow-ignored] [--list-position]
+nero diff file.nero --by PATH X Y [--ignore PATH] [--allow-ignored] [--list-position]
 nero --tokens file.nero           print the tokens
 nero --ast file.nero              print the syntax tree (imports already merged in)
 nero --bin file.nero              write the generated machine code to out.bin
 ```
 
-`--json` and `--yaml` only work with `eval`. Errors are printed to standard error as `error: FILE:LINE:COL: message` and exit with status 1. `check` exits 1 when it finds a problem. `diff` exits 0 when the documents are identical, 1 when they differ and 2 on any error.
+`eval` accepts `--json` (the default) or `--yaml`; `diff` accepts `--json` or `--github` as described below. Errors are printed to standard error as `error: FILE:LINE:COL: message` and exit with status 1. `check` exits 1 when it finds a problem. `diff` exits 0 when the documents are identical, 1 when they differ and 2 on any error.
 
 ## Source files
 
@@ -417,9 +417,35 @@ error: example.nero:2:14: cannot use '+' on an int and a str (use str(...) to tu
 
 ## Kubernetes policy: `nero policy`
 
-`policy` evaluates emitted documents and checks supported Kubernetes resources. It reports untagged or `latest` images, `privileged: true`, missing or enabled `allowPrivilegeEscalation`, UID 0, missing `runAsNonRoot: true`, missing CPU or memory limits, missing or enabled `automountServiceAccountToken`, and Services of type `NodePort` or `LoadBalancer`. It inspects regular, init and ephemeral containers in Pods, Deployments, StatefulSets, DaemonSets, Jobs and CronJobs, plus Services. An unsupported resource kind is reported as uninspected, so it cannot silently pass.
+`policy` evaluates emitted documents and checks supported Kubernetes resources. It reports untagged or `latest` images, `privileged: true`, missing or enabled `allowPrivilegeEscalation`, UID 0, missing `runAsNonRoot: true`, missing CPU or memory limits, missing or enabled `automountServiceAccountToken`, and Services of type `NodePort` or `LoadBalancer`. It inspects regular, init and ephemeral containers in Pods and PodTemplates, Deployments, ReplicaSets, ReplicationControllers, StatefulSets, DaemonSets, Jobs and CronJobs, plus Services. An unsupported resource kind is reported as uninspected, so it cannot silently pass.
+
+Use repeatable `--disable RULE` options to omit selected baseline checks, or repeatable `--only RULE` options to run just selected checks. The rule IDs are `K8S000`, `K8S101`, `K8S201` through `K8S206`, and `K8S301`. Unknown IDs are errors so a typo cannot silently weaken a review. Disable a check only when a separate review or control covers it.
+
+Add organization-specific checks with `--rules RULES.nero`. The rules file is a normal n+ program that emits records with `id`, `path`, `op` and `message`; `kind` optionally limits a rule to one resource kind. `path` uses dotted field names and supports `[*]` to check every item in a list. IDs use 3-32 uppercase letters, digits or underscores and must not conflict with built-in IDs. Supported operators are `exists`, `missing`, `equals`, `notEquals` and `contains`. Value-comparison operators use a `value` field, and comparisons preserve value types.
+
+```nero fragment
+emit {
+    id: "ORG001",
+    kind: "Deployment",
+    path: "spec.template.spec.containers[*].image",
+    op: "contains",
+    value: "registry.example.com/",
+    message: "use the approved image registry",
+}
+```
+
+```sh
+nero policy app.nero --rules policy_rules.nero
+```
 
 These are opinionated baseline checks, not a complete security policy engine. They do not infer whether an image tag is immutable, whether an external Service is approved, or what a workload needs at runtime. Use Kubernetes schema validation and cluster admission policies for those checks.
+
+For full versioned Kubernetes schemas, install `kubernetes-validate==1.37.0` and validate generated YAML separately. n+ keeps these large, versioned upstream schemas out of its C++ runtime:
+
+```sh
+python3 -m pip install kubernetes-validate==1.37.0
+nero eval app.nero --yaml | python3 tools/k8s_validate.py --version 1.37
+```
 
 ## Comparing: `nero diff`
 
@@ -431,11 +457,11 @@ Evaluates the files and compares the documents they `emit`:
 - `nero diff file.nero --by PATH X Y` takes the documents of one file whose field `PATH` (a dotted path such as `metadata.name`) equals `X` and the ones where it equals `Y`, and pairs those. The `--by` field itself is not reported.
 - `--ignore PATH` hides a field and everything below it. It can be repeated. If a change is hidden, `diff` prints the changed path and returns 1; pass `--allow-ignored` with at least one `--ignore` only when the suppressed changes should not fail the review.
 
-`--json` wraps the result in a JSON object with `status`, `exitCode`, `output` and `error`. `output` contains the human-readable diff transcript; scripts can use `status` and `exitCode` without parsing it. Individual changes are not yet exposed as structured fields.
+`--json` returns a JSON object with `status`, `exitCode`, `changes`, `ignoredPaths`, `output` and `error`. Each entry in `changes` has `type` (`~`, `+` or `-`), `path`, typed JSON `before` and `after` values (or `null` when absent), and `document` and `identity` strings when available. Secret references are represented by their redacted reference shape; secret values are never read. `output` retains the human-readable transcript. `ignoredPaths` contains the paths of changes suppressed by `--ignore`.
 
 `--github` prints GitHub Actions workflow annotations for the diff and appends the transcript to `$GITHUB_STEP_SUMMARY` when that variable is set. It requires no token. `--json` and `--github` cannot be combined.
 
-One line per change: `~ path: before -> after`, `+ path: value`, `- path: value`. A list whose items are all records with a unique string `name` is compared by that name. Other lists up to 256 items per side align unchanged items and compare unmatched items in order; larger lists are compared by position. `print` output is not part of a diff. The exit code is 0 for identical, 1 for different, 2 for an error.
+One line per change: `~ path: before -> after`, `+ path: value`, `- path: value`. A list whose items are all records with a unique string `name` is compared by that name. Other lists up to 256 items per side align unchanged items and compare unmatched items in order; ties between equally good alignments resolve toward the earlier left-side item. Larger lists are compared by position. If list entries have no stable identity, insertions near modifications can have more than one reasonable interpretation; use named records or pass `--list-position` when positions carry meaning. That option compares every list by index, including named-record lists. `print` output is not part of a diff. The exit code is 0 for identical, 1 for different, 2 for an error.
 
 ## The compiled backend
 

@@ -20,6 +20,12 @@ static Result run_policy(const std::string& file) {
     return {code, out.str(), err.str()};
 }
 
+static Result run_policy_args(const std::vector<std::string>& args) {
+    std::ostringstream out, err;
+    int code = policy_main(args, out, err);
+    return {code, out.str(), err.str()};
+}
+
 int main() {
     auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
     tmp = (std::filesystem::temp_directory_path() / ("nero_policy_" + std::to_string(nonce))).string();
@@ -45,11 +51,57 @@ int main() {
     assert(result.out.find("K8S205") != std::string::npos);
     assert(result.out.find("K8S206") != std::string::npos);
     assert(result.out.find("K8S301") != std::string::npos);
+    result = run_policy_args({(std::filesystem::path(tmp) / "bad.nero").string(), "--disable", "K8S101"});
+    assert(result.code == 1 && result.out.find("K8S101") == std::string::npos);
+    result = run_policy_args({(std::filesystem::path(tmp) / "bad.nero").string(), "--only", "K8S101"});
+    assert(result.code == 1 && result.out.find("K8S101") != std::string::npos &&
+           result.out.find("K8S201") == std::string::npos);
+    result = run_policy_args({(std::filesystem::path(tmp) / "good.nero").string(), "--disable"});
+    assert(result.code == 2);
+    result = run_policy_args({(std::filesystem::path(tmp) / "good.nero").string(), "--only", "K8S999"});
+    assert(result.code == 2 && result.err.find("unknown policy rule K8S999") != std::string::npos);
+
+    put("custom_rules.nero",
+        "emit {id: \"ORG001\", kind: \"Deployment\", path: \"metadata.labels.team\", op: \"exists\", message: \"set a team label\"}\n"
+        "emit {id: \"ORG002\", kind: \"Deployment\", path: \"spec.template.spec.containers[*].image\", op: \"contains\", value: \"registry.example.com/\", message: \"use the approved registry\"}\n"
+        "emit {id: \"ORG003\", kind: \"Deployment\", path: \"spec.replicas\", op: \"equals\", value: 3, message: \"production must use three replicas\"}\n");
+    put("custom_bad.nero",
+        "emit {kind: \"Deployment\", metadata: {labels: {app: \"web\"}}, spec: {replicas: 2, template: {spec: {containers: [{image: \"registry.example.com/web:v1\"}, {image: \"docker.io/other:v1\"}]}}}}\n");
+    result = run_policy_args({(std::filesystem::path(tmp) / "custom_bad.nero").string(),
+                              "--rules", (std::filesystem::path(tmp) / "custom_rules.nero").string()});
+    assert(result.code == 1 && result.out.find("ORG001") != std::string::npos &&
+           result.out.find("ORG002") != std::string::npos && result.out.find("ORG003") != std::string::npos);
+    result = run_policy_args({(std::filesystem::path(tmp) / "custom_bad.nero").string(),
+                              "--rules", (std::filesystem::path(tmp) / "custom_rules.nero").string(),
+                              "--only", "ORG001"});
+    assert(result.code == 1 && result.out.find("ORG001") != std::string::npos &&
+           result.out.find("ORG002") == std::string::npos);
+    put("custom_good.nero",
+        "emit {kind: \"Deployment\", metadata: {labels: {team: \"platform\"}}, spec: {replicas: 3, template: {spec: {containers: [{image: \"registry.example.com/web:v1\"}]}}}}\n");
+    result = run_policy_args({(std::filesystem::path(tmp) / "custom_good.nero").string(),
+                              "--rules", (std::filesystem::path(tmp) / "custom_rules.nero").string(),
+                              "--only", "ORG001", "--only", "ORG002", "--only", "ORG003"});
+    assert(result.code == 0);
+    put("bad_rules.nero", "emit {id: \"ORG004\", path: \"spec.replicas\", op: \"unknown\", message: \"invalid\"}\n");
+    result = run_policy_args({(std::filesystem::path(tmp) / "custom_good.nero").string(),
+                              "--rules", (std::filesystem::path(tmp) / "bad_rules.nero").string()});
+    assert(result.code == 2 && result.err.find("unsupported custom policy operator") != std::string::npos);
 
     put("digest.nero",
         "emit {apiVersion: \"v1\", kind: \"Pod\", spec: {automountServiceAccountToken: false, containers: [{image: \"app@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\", securityContext: {allowPrivilegeEscalation: false, runAsNonRoot: true}, resources: {limits: {cpu: \"1\", memory: \"1Gi\"}}}]}}\n");
     result = run_policy("digest.nero");
     assert(result.code == 0);
+
+    const std::string safe_pod_spec =
+        "{automountServiceAccountToken: false, containers: [{image: \"app:v1\", "
+        "securityContext: {allowPrivilegeEscalation: false, runAsNonRoot: true}, "
+        "resources: {limits: {cpu: \"1\", memory: \"1Gi\"}}}]}";
+    put("template_kinds.nero",
+        "emit {kind: \"ReplicaSet\", spec: {template: {spec: " + safe_pod_spec + "}}}\n"
+        "emit {kind: \"ReplicationController\", spec: {template: {spec: " + safe_pod_spec + "}}}\n"
+        "emit {kind: \"PodTemplate\", template: {spec: " + safe_pod_spec + "}}\n");
+    result = run_policy("template_kinds.nero");
+    assert(result.code == 0 && result.out == "ok: Kubernetes policy checks passed for 3 documents\n");
 
     put("tagged_digest.nero",
         "emit {apiVersion: \"v1\", kind: \"Pod\", spec: {automountServiceAccountToken: false, containers: [{image: \"app:latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\", securityContext: {allowPrivilegeEscalation: false, runAsNonRoot: true}, resources: {limits: {cpu: \"1\", memory: \"1Gi\"}}}]}}\n");

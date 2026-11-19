@@ -3,6 +3,7 @@
 from copy import deepcopy
 import json
 import subprocess
+import sys
 import tempfile
 
 import kubernetes_validate
@@ -95,9 +96,18 @@ def main():
     if kinds != ["Deployment", "Service"] * 3:
         raise AssertionError("unexpected Kubernetes document kinds: %r" % kinds)
 
-    for version in ("1.28", "1.30", "1.33"):
+    for version in ("1.28", "1.30", "1.33", "1.35", "1.37"):
         for document in documents:
             kubernetes_validate.validate(document, version, strict=True)
+
+    command_validation = subprocess.run(
+        [sys.executable, "tools/k8s_validate.py", "--version", "1.37"],
+        input=result.stdout,
+        capture_output=True,
+        text=True,
+    )
+    if command_validation.returncode != 0 or "validated 6 Kubernetes documents" not in command_validation.stdout:
+        raise AssertionError("upstream schema validation command rejected the demo: %s" % command_validation.stderr)
 
     extended = deepcopy(documents[0])
     container = extended["spec"]["template"]["spec"]["containers"][0]
@@ -106,7 +116,7 @@ def main():
     container["ports"][0]["name"] = "http"
     extended["metadata"]["annotations"] = {"example.org/managed-by": "nero"}
     extended["spec"]["template"]["metadata"]["annotations"] = {"example.org/revision": "1"}
-    for version in ("1.28", "1.30", "1.33"):
+    for version in ("1.28", "1.30", "1.33", "1.35", "1.37"):
         kubernetes_validate.validate(extended, version, strict=True)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -139,7 +149,16 @@ def main():
     try:
         kubernetes_validate.validate(invalid, "1.33", strict=True)
     except kubernetes_validate.ValidationError:
-        print("JSON and YAML match; Kubernetes schemas passed; optional fields and quoted replicas were checked")
+        bad_manifest = yaml.safe_dump(invalid)
+        command_validation = subprocess.run(
+            [sys.executable, "tools/k8s_validate.py", "--version", "1.37"],
+            input=bad_manifest,
+            capture_output=True,
+            text=True,
+        )
+        if command_validation.returncode == 0:
+            raise AssertionError("upstream schema command accepted replicas as a string")
+        print("JSON and YAML match; Kubernetes schemas passed; optional fields and invalid replicas were checked")
         return 0
     raise AssertionError("Kubernetes schema validation accepted replicas as a string")
 

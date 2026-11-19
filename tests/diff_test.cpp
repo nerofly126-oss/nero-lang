@@ -105,12 +105,19 @@ int main() {
     put("two.nero", "emit {a: 1}\nemit {kind: \"Extra\"}\n");
     r = run_diff({P("one.nero"), P("two.nero")});
     assert(r.code == 1 && r.out == "+ Extra (only on the right)\n1 change\n");
+    r = run_diff({P("one.nero"), P("two.nero"), "--json"});
+    assert(r.code == 1 &&
+           r.out.find("\"type\":\"+\",\"path\":\"\",\"before\":null,\"after\":{\"kind\": \"Extra\"}") != std::string::npos);
     r = run_diff({P("two.nero"), P("one.nero")});
     assert(r.code == 1 && r.out == "- Extra (only on the left)\n1 change\n");
     put("single_a.nero", "emit {a: 1}\n");
     put("single_b.nero", "emit {a: 2}\n");
     r = run_diff({P("single_a.nero"), P("single_b.nero")});
     assert(r.out == "~ a: 1 -> 2\n1 change\n");                                              // no header when there is one document each
+    put("lists_a.nero", "emit {items: [{name: \"a\", value: 1}, {name: \"b\", value: 2}]}\n");
+    put("lists_b.nero", "emit {items: [{name: \"b\", value: 2}, {name: \"a\", value: 1}]}\n");
+    r = run_diff({P("lists_a.nero"), P("lists_b.nero"), "--list-position"});
+    assert(r.code == 1 && r.out.find("items[0].name") != std::string::npos);
     put("ignored_left.nero", "emit {kind: \"Deployment\", spec: {replicas: 2}}\n");
     put("ignored_right.nero", "emit {kind: \"Deployment\", spec: {replicas: 5}}\n");
     r = run_diff({P("ignored_left.nero"), P("ignored_right.nero"), "--ignore", "spec.replicas"});
@@ -120,10 +127,13 @@ int main() {
     assert(r.code == 0 && r.out == "! ignored change at Deployment [document 1].spec.replicas\nno unignored differences\n");
     r = run_diff({P("ignored_left.nero"), P("ignored_right.nero"), "--allow-ignored"});
     assert(r.code == 2 && r.err.find("--allow-ignored requires at least one --ignore PATH") != std::string::npos);
+    r = run_diff({P("ignored_left.nero"), P("ignored_right.nero"), "--ignore", "spec.replicas", "--json"});
+    assert(r.code == 1 && r.out.find("\"ignoredPaths\":[\"Deployment [document 1].spec.replicas\"]") != std::string::npos);
     r = run_diff({P("single_a.nero"), P("single_b.nero"), "--json"});
     assert(r.code == 1 && r.err.empty());
     assert(r.out.find("\"status\":\"different\"") != std::string::npos);
     assert(r.out.find("\"exitCode\":1") != std::string::npos);
+    assert(r.out.find("\"changes\":[{\"type\":\"~\",\"path\":\"a\",\"before\":1,\"after\":2") != std::string::npos);
     assert(r.out.find("~ a: 1 -> 2\\n1 change\\n") != std::string::npos);
     r = run_diff({P("single_a.nero"), P("single_b.nero"), "--github"});
     assert(r.code == 1 && r.out == "::notice title=n+ diff::~ a%3A 1 -> 2\n::notice title=n+ diff::1 change\n");
