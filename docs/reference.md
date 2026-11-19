@@ -10,6 +10,7 @@ nero run file.nero                the same
 nero eval file.nero [--json|--yaml]   run with the evaluator: the full language. JSON is the default.
 nero check file.nero              static pass over everything, called or not
 nero diff a.nero b.nero [--ignore PATH]
+nero diff a.nero b.nero --match PATH [--ignore PATH]
 nero diff file.nero --by PATH X Y [--ignore PATH]
 nero --tokens file.nero           print the tokens
 nero --ast file.nero              print the syntax tree (imports already merged in)
@@ -402,6 +403,7 @@ error: example.nero:2:14: cannot use '+' on an int and a str (use str(...) to tu
 Evaluates the files and compares the documents they `emit`:
 
 - `nero diff a.nero b.nero` pairs the documents of both files by position.
+- `nero diff a.nero b.nero --match PATH` pairs documents by the scalar value at a dotted field path, such as `metadata.name`. Every document in both files must have a value there, and the values must be unique within each file. Documents that only occur on one side are reported as additions or removals.
 - `nero diff file.nero --by PATH X Y` takes the documents of one file whose field `PATH` (a dotted path such as `metadata.name`) equals `X` and the ones where it equals `Y`, and pairs those. The `--by` field itself is not reported.
 - `--ignore PATH` hides a field and everything below it. It can be repeated.
 

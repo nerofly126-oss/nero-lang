@@ -109,6 +109,23 @@ int main() {
     put("single_b.nero", "emit {a: 2}\n");
     r = run_diff({P("single_a.nero"), P("single_b.nero")});
     assert(r.out == "~ a: 1 -> 2\n1 change\n");                                              // no header when there is one document each
+    put("match_left.nero",
+        "emit {kind: \"ConfigMap\", metadata: {name: \"settings\"}, data: {mode: \"dev\"}}\n"
+        "emit {kind: \"Service\", metadata: {name: \"web\"}, port: 80}\n");
+    put("match_right.nero",
+        "emit {kind: \"Service\", metadata: {name: \"web\"}, port: 8080}\n"
+        "emit {kind: \"ConfigMap\", metadata: {name: \"settings\"}, data: {mode: \"dev\"}}\n"
+        "emit {kind: \"Deployment\", metadata: {name: \"worker\"}}\n");
+    r = run_diff({P("match_left.nero"), P("match_right.nero"), "--match", "metadata.name"});
+    assert(r.code == 1);
+    assert(r.out == "@ Service (metadata.name=\"web\")\n~ port: 80 -> 8080\n"
+                    "+ Deployment [metadata.name=\"worker\"] (only on the right)\n2 changes\n");
+    put("match_duplicate.nero", "emit {metadata: {name: \"same\"}}\nemit {metadata: {name: \"same\"}}\n");
+    r = run_diff({P("match_duplicate.nero"), P("match_left.nero"), "--match", "metadata.name"});
+    assert(r.code == 2 && r.err.find("duplicate value for metadata.name in left file") != std::string::npos);
+    put("match_missing.nero", "emit {metadata: {other: \"missing\"}}\n");
+    r = run_diff({P("match_missing.nero"), P("match_left.nero"), "--match", "metadata.name"});
+    assert(r.code == 2 && r.err.find("document has no value at metadata.name") != std::string::npos);
     put("printy.nero", "print \"noise\"\nemit {a: 1}\n");
     r = run_diff({P("printy.nero"), P("single_a.nero")});
     assert(r.code == 0 && r.out == "no differences\n");                                      // print output is not part of a diff
@@ -136,6 +153,7 @@ int main() {
     assert(run_diff({P("a.nero"), P("b.nero"), P("a.nero")}).code == 2);
     assert(run_diff({P("a.nero"), "--by"}).code == 2);
     assert(run_diff({P("a.nero"), P("b.nero"), "--nope"}).err == "error: unknown option --nope\n");
+    assert(run_diff({P("a.nero"), "--match"}).err == "error: --match needs a value\n");
     r = run_diff({P("missing.nero"), P("a.nero")});
     assert(r.code == 2 && r.err.find("cannot open") != std::string::npos);
     put("broken.nero", "emit 1 / 0\n");

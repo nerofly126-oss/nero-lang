@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -11,6 +12,7 @@
 
 // "nero diff": what changes between two sets of emitted documents.
 //   nero diff a.nero b.nero                        the documents of a against the documents of b, by position
+//   nero diff a.nero b.nero --match metadata.name  pair documents by a unique scalar identity
 //   nero diff f.nero --by PATH X Y                 inside one file: the documents whose PATH is X against those whose PATH is Y
 //   --ignore PATH (repeatable) hides a field and everything under it. The --by field is hidden on its own.
 // Output, one line per change:   ~ path: before -> after    + path: added value    - path: removed value
@@ -204,6 +206,32 @@ inline std::string diff_at(const Value& doc, const std::string& path, bool& foun
     return "";
 }
 
+inline std::string diff_identity(const Value& doc, const std::string& path, std::string& shown) {
+    const Value* cur = &doc;
+    size_t start = 0;
+    while (true) {
+        size_t dot = path.find('.', start);
+        std::string key = path.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+        if (cur->kind != Value::Record || !(cur = diff_field(*cur, key)))
+            throw std::runtime_error("document has no value at " + path);
+        if (dot == std::string::npos) break;
+        start = dot + 1;
+    }
+    if (cur->kind == Value::Str) {
+        shown = to_json(*cur, false);
+        return "s:" + cur->s;
+    }
+    if (cur->kind == Value::Int) {
+        shown = std::to_string(cur->i);
+        return "i:" + shown;
+    }
+    if (cur->kind == Value::Bool) {
+        shown = cur->i ? "true" : "false";
+        return "b:" + shown;
+    }
+    throw std::runtime_error("match field " + path + " must be a string, int or bool");
+}
+
 // everything a file emits, in order. print output is not part of a diff.
 inline std::vector<Value> diff_collect(const std::string& file) {
     Program prog = Loader().load(file);
@@ -258,11 +286,12 @@ inline void diff_print(const std::vector<Change>& changes, std::ostream& os) {
 
 inline int diff_main(const std::vector<std::string>& args, std::ostream& out, std::ostream& err) {
     std::vector<std::string> pos, ignore;
-    std::string by;
+    std::string by, match;
     for (size_t i = 0; i < args.size(); i++) {
-        if (args[i] == "--by" || args[i] == "--ignore") {
+        if (args[i] == "--by" || args[i] == "--match" || args[i] == "--ignore") {
             if (i + 1 >= args.size()) { err << "error: " << args[i] << " needs a value\n"; return 2; }
             if (args[i] == "--by") by = args[++i];
+            else if (args[i] == "--match") match = args[++i];
             else ignore.push_back(args[++i]);
         } else if (args[i].compare(0, 2, "--") == 0) {
             err << "error: unknown option " << args[i] << "\n";
@@ -272,14 +301,63 @@ inline int diff_main(const std::vector<std::string>& args, std::ostream& out, st
         }
     }
     bool one_file = !by.empty();
-    if ((!one_file && pos.size() != 2) || (one_file && pos.size() != 3)) {
+    if ((!one_file && pos.size() != 2) || (one_file && pos.size() != 3) || (!match.empty() && one_file)) {
         err << "usage: nero diff a.nero b.nero [--ignore PATH]\n"
+               "       nero diff a.nero b.nero --match PATH [--ignore PATH]\n"
                "       nero diff file.nero --by PATH X Y [--ignore PATH]\n";
         return 2;
     }
     if (one_file) ignore.push_back(by);
 
     try {
+        if (!match.empty()) {
+            std::vector<Value> docs_a = diff_collect(pos[0]);
+            std::vector<Value> docs_b = diff_collect(pos[1]);
+            std::map<std::string, size_t> left_ids, right_ids;
+            std::vector<std::string> left_shown(docs_a.size()), right_shown(docs_b.size());
+            for (size_t k = 0; k < docs_a.size(); k++) {
+                std::string id = diff_identity(docs_a[k], match, left_shown[k]);
+                if (!left_ids.emplace(id, k).second)
+                    throw std::runtime_error("duplicate value for " + match + " in left file: " + left_shown[k]);
+            }
+            for (size_t k = 0; k < docs_b.size(); k++) {
+                std::string id = diff_identity(docs_b[k], match, right_shown[k]);
+                if (!right_ids.emplace(id, k).second)
+                    throw std::runtime_error("duplicate value for " + match + " in right file: " + right_shown[k]);
+            }
+
+            size_t total = 0;
+            for (size_t k = 0; k < docs_a.size(); k++) {
+                std::string id = diff_identity(docs_a[k], match, left_shown[k]);
+                auto found = right_ids.find(id);
+                if (found == right_ids.end()) continue;
+                size_t other = found->second;
+                std::vector<Change> changes = diff_pair(docs_a[k], docs_b[other], ignore);
+                if (changes.empty()) continue;
+                out << "@ " << diff_label(docs_a[k], k) << " (" << match << "=" << left_shown[k] << ")\n";
+                diff_print(changes, out);
+                total += changes.size();
+            }
+            for (size_t k = 0; k < docs_a.size(); k++) {
+                std::string id = diff_identity(docs_a[k], match, left_shown[k]);
+                if (right_ids.count(id)) continue;
+                out << "- " << diff_label(docs_a[k], k) << " [" << match << "=" << left_shown[k] << "] (only on the left)\n";
+                total++;
+            }
+            for (size_t k = 0; k < docs_b.size(); k++) {
+                std::string id = diff_identity(docs_b[k], match, right_shown[k]);
+                if (left_ids.count(id)) continue;
+                out << "+ " << diff_label(docs_b[k], k) << " [" << match << "=" << right_shown[k] << "] (only on the right)\n";
+                total++;
+            }
+            if (total == 0) {
+                out << "no differences\n";
+                return 0;
+            }
+            out << total << (total == 1 ? " change\n" : " changes\n");
+            return 1;
+        }
+
         std::vector<const Value*> left, right;
         std::vector<Value> docs_a, docs_b;
         std::string head_suffix;

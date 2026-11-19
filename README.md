@@ -6,11 +6,11 @@ Licensed under the MIT License. See [LICENSE](LICENSE).
 
 It started as a JIT compiler that had no reason to exist. The compiler is still in here (`nero run`). Now there is a language on top of it that does have a reason.
 
-## Honest first
+## What n+ is for
 
-Jsonnet, CUE, Dhall, HCL and Pkl exist, and they are better than this. I did not build n+ because the world needed another config language. I built it to learn how one works, using only a terminal, g++ and no libraries. If you need to configure real infrastructure, use one of those.
+n+ is a small, typed language for generating and reviewing Kubernetes configuration. Keep environment variants in one `.nero` program, run `check` over code paths that may not execute, inspect changes with `diff`, then emit ordinary JSON or YAML for the tools you already use. The CLI has no third-party runtime dependencies.
 
-What you get here is a working language with a Kubernetes demo that actually runs, and every claim below is something you can run yourself.
+The project is early and its bundled Kubernetes schemas are intentionally partial. Its focus is a short, understandable path from configuration source to a useful review and a Kubernetes-validated manifest, rather than a broad language ecosystem. The demo and checks below are runnable; the [known gaps](#known-gaps) describe the limits plainly.
 
 ## Learn it
 
@@ -83,6 +83,14 @@ $ ./nero diff examples/k8s.nero --by metadata.name web-staging web-prod
 ```
 
 Lists of records that all have a unique `name` (containers, env vars) are matched by name, so reordering them is not a change. `--ignore PATH` hides a field and everything under it. You can also diff two files: `nero diff a.nero b.nero`. The exit code is 0 for identical, 1 for different and 2 for trouble, so it works in CI.
+
+When reviewing two generated revisions, pair resources by a field that is unique in each file instead of relying on emission order:
+
+```
+./nero diff old.nero new.nero --match metadata.name
+```
+
+This keeps reordering from looking like a change and reports resources that only exist on one side. If the chosen field is missing or duplicated, `diff` stops with an error rather than guessing.
 
 ## Run the Kubernetes demo
 
@@ -175,6 +183,7 @@ nero file.nero                    compiled backend: ints and strings only, runs 
 nero eval file.nero [--yaml]      the full language, prints JSON or YAML
 nero check file.nero              static pass over everything, exit 1 on problems
 nero diff a.nero b.nero           what changes between two files
+nero diff a.nero b.nero --match PATH   pair documents by a unique field
 nero diff f.nero --by PATH X Y    what changes between two documents of one file
 nero --tokens | --ast file.nero   look at the lexer and parser output
 nero --bin file.nero              write the generated machine code to out.bin
