@@ -238,7 +238,7 @@ Eleven assert-based suites, each printing `all ... tests passed`. `python3 tests
 
 ## Releases
 
-Push a version tag such as `v0.1.0` to publish a GitHub release with binaries for Linux x86-64, Intel macOS and Apple Silicon. Each `.tar.gz` includes the `nero` executable, this README, the license and the tutorial and reference, with a matching SHA-256 checksum file. `nero run` still requires an x86-64 process; all release builds support `eval`, `check` and `diff`.
+Push a version tag such as `v0.2.0` to publish a GitHub release with binaries for Linux x86-64, Intel macOS and Apple Silicon. Each `.tar.gz` includes the `nero` executable, this README, the license, the tutorial and reference, Kubernetes examples, custom policy rules and the upstream schema validation helper, with a matching SHA-256 checksum file. `nero run` still requires an x86-64 process; all release builds support `eval`, `check`, `policy` and `diff`.
 
 ## Layout
 
